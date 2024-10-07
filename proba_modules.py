@@ -916,13 +916,14 @@ def compute_multiple_trajectories(proba_model, winds, lats, lons):
         
     return pd_final_probas
 
-def compute_proba_one_trajectory(trajectory_in, proba_model, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False):
+def compute_proba_one_trajectory(trajectory_in, snrs, lats, lons, probas, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False):
+#def compute_proba_one_trajectory(trajectory_in, proba_model, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False):
     
-    snrs = proba_model.SNR_thresholds
-    isnrs = [np.argmin(abs(snrs-snr)) for snr in snrs_selected]
-    lats, lons = proba_model.all_lats, proba_model.all_lons
-    probas = proba_model.proba_all.copy() # SNR x lats x lons
+    #snrs = proba_model.SNR_thresholds
+    #lats, lons = proba_model.all_lats, proba_model.all_lons
+    #probas = proba_model.proba_all.copy() # SNR x lats x lons
     trajectory = trajectory_in.copy()
+    isnrs = [np.argmin(abs(snrs-snr)) for snr in snrs_selected]
 
     g = Geod(ellps='WGS84')
 
@@ -991,12 +992,13 @@ def compute_proba_one_trajectory(trajectory_in, proba_model, snrs_selected=[1.,2
     """
     return new_trajectory
 
-def compute_multiple_trajectories(proba_model, winds, mission_durations, max_number_months, inputs):
+def compute_multiple_trajectories(snrs, lats, lons, probas, winds, mission_durations, max_number_months, inputs):
+#def compute_multiple_trajectories(proba_model, winds, mission_durations, max_number_months, inputs):
     
     #LATS, LONS = np.meshgrid(lats, lons)
     #LATS, LONS = LATS.ravel(), LONS.ravel()
     icpu, LATS, LONS = inputs
-    
+
     opt_trajectory = dict(
         nstep_max=1000, 
         time_max=3600*24*30*max_number_months,
@@ -1007,7 +1009,8 @@ def compute_multiple_trajectories(proba_model, winds, mission_durations, max_num
     for lat, lon in tqdm(zip(LATS, LONS), total=LATS.size, disable=not icpu==0):
         start_location = [lat, lon] # lat, lon
         trajectory = VCD.compute_trajectory(winds, start_location, **opt_trajectory)
-        new_trajectories = compute_proba_one_trajectory(trajectory, proba_model, norm_factor_time=3600., disable_bar=True) ## Venusquake
+        #new_trajectories = compute_proba_one_trajectory(trajectory, proba_model, norm_factor_time=3600., disable_bar=True) ## Venusquake
+        new_trajectories = compute_proba_one_trajectory(trajectory, snrs, lats, lons, probas, norm_factor_time=3600., disable_bar=True) ## Venusquake
         
         for target_duration in mission_durations:
             
@@ -1024,7 +1027,12 @@ from functools import partial
 from multiprocessing import get_context
 def compute_multiple_trajectories_CPUs(proba_model, winds, LATS, LONS, mission_durations, max_number_months=4, nb_CPU=10):
 
-    partial_compute_surfaces = partial(compute_multiple_trajectories, proba_model, winds, mission_durations, max_number_months)
+    snrs = proba_model.SNR_thresholds
+    lats, lons = proba_model.all_lats, proba_model.all_lons
+    probas = proba_model.proba_all.copy() # SNR x lats x lons
+
+    partial_compute_multiple_trajectories = partial(compute_multiple_trajectories, snrs, lats, lons, probas, winds, mission_durations, max_number_months)
+    #partial_compute_multiple_trajectories = partial(compute_multiple_trajectories, proba_model, winds, mission_durations, max_number_months)
     nb_chunks = LATS.shape[0]
     idx_start_all = np.arange(nb_chunks)
     
@@ -1032,7 +1040,7 @@ def compute_multiple_trajectories_CPUs(proba_model, winds, LATS, LONS, mission_d
     ## If one CPU requested, no need for deployment
     if N == 1:
         print('Running serial')
-        pd_final_probas = partial_compute_surfaces((0, LATS, LONS))
+        pd_final_probas = partial_compute_multiple_trajectories((0, LATS, LONS))
 
     ## Otherwise, we pool the processes
     else:
@@ -1049,7 +1057,7 @@ def compute_multiple_trajectories_CPUs(proba_model, winds, LATS, LONS, mission_d
 
         with get_context("spawn").Pool(processes = N) as p:
             print(f'Running across {N} CPU')
-            all_pd_final_probas = p.map(partial_compute_surfaces, list_of_lists)
+            all_pd_final_probas = p.map(partial_compute_multiple_trajectories, list_of_lists)
             p.close()
             p.join()
 
@@ -1058,7 +1066,7 @@ def compute_multiple_trajectories_CPUs(proba_model, winds, LATS, LONS, mission_d
             #gdf_loc['iscenario'] += idx
             pd_final_probas = pd.concat([pd_final_probas, pd_final_probas_loc], ignore_index=True)
         pd_final_probas.reset_index(drop=True, inplace=True)
-        
+
     return pd_final_probas
 
 #############################################
