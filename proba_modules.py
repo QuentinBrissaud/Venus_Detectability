@@ -893,6 +893,7 @@ def plot_proba_all_trajectories(pd_final_probas, mission_durations, xlim=[0, 1],
         ax.set_ylim(ylim)
 
 import VCD_trajectory_modules as VCD
+"""
 def compute_multiple_trajectories(proba_model, winds, lats, lons):
     
     LATS, LONS = np.meshgrid(lats, lons)
@@ -915,6 +916,7 @@ def compute_multiple_trajectories(proba_model, winds, lats, lons):
         pd_final_probas = pd.concat([pd_final_probas, pd_final_proba])
         
     return pd_final_probas
+"""
 
 def compute_proba_one_trajectory(trajectory_in, snrs, lats, lons, probas, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False):
 #def compute_proba_one_trajectory(trajectory_in, proba_model, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False):
