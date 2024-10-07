@@ -11,7 +11,6 @@ path_effects = [patheffects.withStroke(linewidth=3, foreground="w")]
 
 def get_winds(file_atmos, altitude):
 
-    file_atmos = './data/VCD_atmos_globe.dat'
     all_data = pd.read_csv(file_atmos, header=[0])
 
     winds = all_data.loc[(abs(all_data.alt-altitude)==abs(all_data.alt-altitude).min())
