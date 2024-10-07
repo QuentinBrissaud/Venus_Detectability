@@ -9,7 +9,7 @@ import numpy as np
 import geopandas as gpd 
 import os
 import seaborn as sns
-from matplotlib.patches import Polygon
+from matplotlib.patches import Polygon as Polygon_mpl
 from mpl_toolkits.basemap import Basemap
 import matplotlib.cm as cm
 import matplotlib.colors as mcol
@@ -301,7 +301,7 @@ from scipy.interpolate import RectBivariateSpline
 from matplotlib.ticker import FuncFormatter
 import matplotlib.cm as cm
 import matplotlib.colors as mcol
-from matplotlib.patches import Polygon
+from matplotlib.patches import Polygon  as Polygon_mpl
 from sklearn.cluster import DBSCAN
 import matplotlib.patches as mpatches
 
@@ -315,6 +315,10 @@ def get_regions(dir_venus_data):
         'ridge': gpd.read_file(f"{PATH_VENUS}/ridges.shp")
     }
     return VENUS
+
+def get_volcano_locations(file_volcano):
+    volcanoes = pd.read_csv(file_volcano, header=[0])
+    return volcanoes        
 
 def get_slopes(file_slopes):
     pd_slopes = pd.read_csv(file_slopes, header=[0])
@@ -371,7 +375,7 @@ def convert_VEI_to_Mw(vjet = np.linspace(0.1, 0.5, 80), rho_tephra = np.linspace
 
     return VEI_to_Mw_median, VEI_to_Mw_q25, VEI_to_Mw_q75
 
-def get_TL_curves_with_EI(file_curve, dist_min=100., alt_balloon=50.):
+def get_TL_curves_with_EI(file_curve, dist_min=100., alt_balloon=50., rho0=50, rhob=1.):
 
     TL_seismic_new, TL_seismic_new_qmin, TL_seismic_new_qmax = get_TL_curves(file_curve, dist_min)
 
@@ -382,7 +386,7 @@ def get_TL_curves_with_EI(file_curve, dist_min=100., alt_balloon=50.):
 
     TL_EI_new, TL_EI_new_qmin, TL_EI_new_qmax = compute_EI_from_VEI(alt_balloon=alt_balloon)
 
-    rho0, rhob = 50, 1
+    
     density_ratio = np.sqrt(rhob/rho0)
 
     TL_new = lambda dist, VEI: np.maximum(density_ratio*TL_EI_new(dist, VEI), TL_seismic_new_VEI(dist, VEI))
@@ -391,13 +395,30 @@ def get_TL_curves_with_EI(file_curve, dist_min=100., alt_balloon=50.):
 
     return TL_new, TL_new_qmin, TL_new_qmax
 
-def get_TL_curves(file_curve, dist_min = 100., use_savgol_filter=False, plot=False):
+def get_TL_curves(file_curve, dist_min = 100., rho0=50., rhob=1., cb=250., use_savgol_filter=False, plot=False, scalar_moment=1):
 
+    #median_rw	median_q0.25_rw	median_q0.75_rw	median_body	median_q0.25_body	median_q0.75_body
     pd_all_amps = pd.read_csv(file_curve, header=[0])
+    
+    if 'median_rw' in pd_all_amps.columns:
+        x = pd_all_amps.dist.values/1e3
+        median = pd_all_amps['median_rw'].values
+        q25 = pd_all_amps['median_q0.25_rw'].values
+        q75 = pd_all_amps['median_q0.75_rw'].values
+    else:
+        x = pd_all_amps.dist.unique()/1e3
+        median = pd_all_amps.groupby(['dist'])['amp_RW'].median().reset_index().amp_RW.values
+        q25 = pd_all_amps.groupby(['dist'])['amp_RW'].quantile(q=0.25).reset_index().amp_RW.values
+        q75 = pd_all_amps.groupby(['dist'])['amp_RW'].quantile(q=0.75).reset_index().amp_RW.values
+
+    median /= scalar_moment
+    q25 /= scalar_moment
+    q75 /= scalar_moment
 
     if use_savgol_filter:
         from scipy.signal import savgol_filter
-        x = degrees2kilometers(pd_all_amps.dist.values)
+        
+        """
         isep = np.argmin(abs(x-2000))
 
         fs = []
@@ -411,6 +432,18 @@ def get_TL_curves(file_curve, dist_min = 100., use_savgol_filter=False, plot=Fal
             y_smooth[isep:] = savgol_filter(y[isep:], window_size, poly_order)
             f = interpolate.interp1d(x, y_smooth, bounds_error=False, fill_value=(y_smooth[0], y_smooth[-1]))
             fs.append(f)
+        """
+        fs = []
+        for y in [median, q25, q75]:
+            y_smooth = np.zeros_like(y)
+            window_size = 5  # Must be odd
+            poly_order = 3
+            y_smooth[:] = savgol_filter(y[:], window_size, poly_order)
+            #window_size = 15  # Must be odd
+            #poly_order = 3
+            #y_smooth[isep:] = savgol_filter(y[isep:], window_size, poly_order)
+            f = interpolate.interp1d(x, y_smooth, bounds_error=False, fill_value=(y_smooth[0], y_smooth[-1]))
+            fs.append(f)
 
         f_mean = fs[0]
         f_qmin = fs[1]
@@ -418,9 +451,9 @@ def get_TL_curves(file_curve, dist_min = 100., use_savgol_filter=False, plot=Fal
     
     else:
         ## Rayleigh waves
-        f_mean = interpolate.interp1d(degrees2kilometers(pd_all_amps.dist.values), pd_all_amps.median_rw.values, bounds_error=False, fill_value=(pd_all_amps.median_rw.iloc[0], pd_all_amps.median_rw.iloc[-1]))
-        f_qmin = interpolate.interp1d(degrees2kilometers(pd_all_amps.dist.values), pd_all_amps['median_q0.25_rw'].values, bounds_error=False, fill_value=(pd_all_amps['median_q0.25_rw'].iloc[0], pd_all_amps['median_q0.25_rw'].iloc[-1]))
-        f_qmax = interpolate.interp1d(degrees2kilometers(pd_all_amps.dist.values), pd_all_amps['median_q0.75_rw'].values, bounds_error=False, fill_value=(pd_all_amps['median_q0.75_rw'].iloc[0], pd_all_amps['median_q0.75_rw'].iloc[-1]))
+        f_mean = interpolate.interp1d(x, median, bounds_error=False, fill_value=(median[0], median[-1]))
+        f_qmin = interpolate.interp1d(x, q25, bounds_error=False, fill_value=(q25[0], q25.iloc[-1]))
+        f_qmax = interpolate.interp1d(x, q75, bounds_error=False, fill_value=(q75[0], q75[-1]))
 
         ## Body waves
         """
@@ -439,8 +472,6 @@ def get_TL_curves(file_curve, dist_min = 100., use_savgol_filter=False, plot=Fal
     TL_base_seismic_disp = lambda dist, m0: 10**(m0 -1.66*np.log10(kilometers2degrees(dist)) -3.3)*period # eq. 3
     TL_base_seismic = lambda dist, m0: 1e-6*TL_base_seismic_disp(dist, m0)*2*np.pi/period
     """
-
-    rho0, c0, rhob, cb = 50, 400, 1, 250
     density_ratio = rhob*cb*np.sqrt(rho0/(rhob))
 
     #TL_base = lambda dist, m0: density_ratio*(TL_base_seismic(dist,m0)*1e-6)/(2*np.pi*period) # Raphael
@@ -453,7 +484,7 @@ def get_TL_curves(file_curve, dist_min = 100., use_savgol_filter=False, plot=Fal
     TL_new_qmax = lambda dist, m0: TL_base_qmax(dist, m0)*(dist>=dist_min) + TL_base_qmax(dist_min, m0)*(dist<dist_min)
 
     if plot:
-        dists = np.linspace(10., 18e3, 100)
+        dists = np.linspace(1., 18e3, 100)
         mags = [5., 6.]
         noise_level = 5e-2
         plt.figure()
@@ -465,10 +496,12 @@ def get_TL_curves(file_curve, dist_min = 100., use_savgol_filter=False, plot=Fal
             plt.fill_between(dists, TL_new_qmin(dists, mag)/noise_level, TL_new_qmax(dists, mag)/noise_level, color='grey', alpha=0.3, **label)
 
         plt.yscale('log')
+        plt.xscale('log')
         plt.xlabel('Distance (km)', fontsize=12.)
         plt.ylabel('Amplitude (Pa)', fontsize=12.)
         plt.legend(frameon=False, fontsize=12.)
-        plt.savefig('./test_data_Venus/TL_examples.png', transparent=True)
+        folder_curve_img = '/'.join(file_curve.split('/')[:-1])
+        plt.savefig(f'{folder_curve_img}/TL_examples.png', transparent=True)
 
     return TL_new, TL_new_qmin, TL_new_qmax
 
@@ -494,10 +527,11 @@ class proba_model:
 
     @staticmethod
     def return_number_per_cat_and_setting(mw, pd_slopes, cat_quake, setting):
-    
+
         slope = pd_slopes.loc[(pd_slopes.type_setting==setting)&(pd_slopes.type_unknown=='slope'), cat_quake].iloc[0]
         intercept = pd_slopes.loc[(pd_slopes.type_setting==setting)&(pd_slopes.type_unknown=='intercept'), cat_quake].iloc[0]
         func = lambda mw: 10**(np.log10(mtm.magnitude_to_moment(mw))*slope+intercept)
+        
         return func(mw)
 
     def compute_ratemag(self, region):
@@ -513,6 +547,9 @@ class proba_model:
     def compute_ratio_vs_loc(self, lats, lons, locations, region):
         
         surface_ratios_region = self.surface_ratios.loc[self.surface_ratios.region==region]
+
+        #print(surface_ratios_region, region,self.surface_ratios.region)
+
         #l_radius = surface_ratios_region.radius.unique()
         l_iloc = surface_ratios_region['iloc'].unique()
         l_lats = [surface_ratios_region.loc[surface_ratios_region['iloc']==iloc, 'lat'].iloc[0] for iloc in l_iloc]
@@ -528,6 +565,7 @@ class proba_model:
             else:
                 isurface = np.argmin(np.sqrt((lats[iloc]-l_lats)**2+(lons[iloc]-l_lons)**2))
                 surface_ratios_region_iloc = surface_ratios_region.loc[surface_ratios_region['iloc']==isurface]
+                #print(isurface, region, surface_ratios_region['iloc'].unique())
                 radius_values = surface_ratios_region_iloc.radius.values
                 ratios_values = surface_ratios_region_iloc.ratio.values
                 ratios_values_interp = np.interp(self.dists, radius_values/1e3, ratios_values)
@@ -689,7 +727,43 @@ class proba_model:
             if self.return_rate:
                 for region, rate in zip(l_regions, rates):
                     self.rates_all[region][:,:,ilon] = rate
-            
+
+###################
+## PROBA AIRGLOW ##
+###################
+
+class proba_model_airglow(proba_model):
+
+    def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax):
+        super().__init__(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax)
+
+    @staticmethod
+    def return_number_per_cat_and_setting(mw, pd_slopes, cat_quake, setting):
+
+        popt = pd_slopes.loc[(pd_slopes.type_setting==setting), cat_quake].values
+        poly1d = np.poly1d(popt)
+        func = lambda mw: 10**poly1d(mw)
+        
+        return func(mw)
+
+##########################
+## PROBA MODEL WRINKLES ##
+##########################
+
+class proba_model_wrinkles(proba_model):
+
+    def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax):
+        super().__init__(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax)
+
+    @staticmethod
+    def return_number_per_cat_and_setting(mw, pd_slopes, cat_quake, setting):
+
+        popt = pd_slopes.loc[(pd_slopes.type_setting==setting), cat_quake].values
+        poly1d = np.poly1d(popt)
+        func = lambda mw: 10**poly1d(mw)
+        
+        return func(mw)
+
 ###########################
 ## PROBA MODEL VOLCANOES ##
 ###########################
@@ -764,25 +838,106 @@ class proba_model_volcano(proba_model):
 ## BALLOON TRAJECTORY INTEGRATION ##
 ####################################
 
-def compute_proba_one_trajectory(trajectory, proba_model, snrs_selected = [1.,2.,5.], norm_factor_time=3600.):
+def plot_maps_all_trajectories(pd_final_probas, lons, lats, mission_durations, cmap_bounds=np.linspace(0., 0.8, 15)):
+
+    LONS, LATS = np.meshgrid(lons, lats)
+
+    cmap = cm.get_cmap("Reds", lut=len(cmap_bounds))
+    norm = mcol.BoundaryNorm(cmap_bounds, cmap.N)
+        
+    fig = plt.figure(figsize=(10,10))
+    grid = fig.add_gridspec(len(mission_durations), 3)
+    iduration = -1
+    for duration, one_duration in pd_final_probas.groupby(['duration']):
+        iduration += 1
+        isnr = -1
+        for snr, one_snr in one_duration.groupby(['snr']):
+            isnr +=1
+            field = one_snr.proba.values.reshape(lons.size, lats.size)
+            
+            
+            ax = fig.add_subplot(grid[iduration, isnr])
+            m = Basemap(projection='robin', lon_0=0, ax=ax)
+            m.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=10,)
+            m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=10,)
+            x, y = m(LONS.ravel(), LATS.ravel())
+            x, y = x.reshape(LONS.shape), y.reshape(LONS.shape)
+            sc = m.pcolormesh(x, y, field.T, cmap=cmap, norm=norm)
+            #plt.colorbar(sc)
+            plt.title(f'SNR {snr} - {duration:.0f} days')
+
+    fmt = lambda x, pos: '{:.2f} %'.format(x*1e2) # 
+    axins = inset_axes(ax, width="6%", height="250%", loc='lower left', bbox_to_anchor=(1.05, 0., 1, 1.), bbox_transform=ax.transAxes, borderpad=0)
+    axins.tick_params(axis='both', which='both', labelbottom=False, labelleft=False, bottom=False, left=False)
+    cbar = fig.colorbar(sc, format=FuncFormatter(fmt), cax=axins, orientation='vertical', extend='both', ticks=cmap_bounds[1:],)
+
+def plot_proba_all_trajectories(pd_final_probas, mission_durations, xlim=[0, 1], ylim=[0, 40.]):
+
+    fig = plt.figure(figsize=(14,3))
+    grid = fig.add_gridspec(1, len(mission_durations))
+    iduration = -1
+    for duration, one_duration in pd_final_probas.groupby(['duration']):
+        iduration += 1
+        ax = fig.add_subplot(grid[0, iduration])
+        ax.set_title(f'Mission {duration:.0f} days')
+        for snr, one_snr in one_duration.groupby(['snr']):
+            #values, bins = np.histogram(one_snr.proba, bins=20)
+            #bin_centers = 0.5 * (bins[:-1] + bins[1:])
+            #ax.bar(bin_centers, values/, width=(bins[1] - bins[0]), label=snr)
+            ax.hist(one_snr.proba, bins=20, label=snr, density=True)
+        ax.set_xlabel('Detection Probability')
+        if iduration == 0:
+            ax.legend(title='SNR', frameon=False)
+            ax.set_ylabel('Probability Density Function')
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+import VCD_trajectory_modules as VCD
+def compute_multiple_trajectories(proba_model, winds, lats, lons):
+    
+    LATS, LONS = np.meshgrid(lats, lons)
+    LATS, LONS = LATS.ravel(), LONS.ravel()
+    
+    opt_trajectory = dict(
+        nstep_max=1000, 
+        time_max=3600*24*30*2,
+        save_trajectory=False,
+        folder = './data/',
+    )
+    pd_final_probas = pd.DataFrame()
+    for lat, lon in tqdm(zip(LATS, LONS), total=LATS.size):
+        start_location = [lat, lon] # lat, lon
+        trajectory = VCD.compute_trajectory(winds, start_location, **opt_trajectory)
+        new_trajectories = compute_proba_one_trajectory(trajectory, proba_model, norm_factor_time=3600., disable_bar=True) ## Venusquake
+        pd_final_proba = new_trajectories.groupby('snr').last().reset_index()[['snr', 'proba']]
+        pd_final_proba['lat'] = lat
+        pd_final_proba['lon'] = lon
+        pd_final_probas = pd.concat([pd_final_probas, pd_final_proba])
+        
+    return pd_final_probas
+
+def compute_proba_one_trajectory(trajectory_in, proba_model, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False):
     
     snrs = proba_model.SNR_thresholds
+    isnrs = [np.argmin(abs(snrs-snr)) for snr in snrs_selected]
     lats, lons = proba_model.all_lats, proba_model.all_lons
-    
+    probas = proba_model.proba_all.copy() # SNR x lats x lons
+    trajectory = trajectory_in.copy()
+
     g = Geod(ellps='WGS84')
 
+    ## Assign time bins to each entry of the trajectory
     trajectory['dt'] = trajectory.time/norm_factor_time # time in hours
     bins = np.arange(int(trajectory['dt'].max())+1)
     trajectory['bin_dt'] = np.searchsorted(bins, trajectory['dt'].values)
     
-    LONS_STAT, LATS_STAT = np.meshgrid(lons, lats)
-    shape_init = LATS_STAT.shape
+    ## Find corresponding probabilities along trajectory
+    LATS_STAT, LONS_STAT = np.meshgrid(lats, lons)
     LATS_STAT, LONS_STAT = LATS_STAT.ravel(), LONS_STAT.ravel()
 
     id_bins, id_map = np.meshgrid(np.arange(trajectory.shape[0]), np.arange(LATS_STAT.size))
     id_bins_shape = id_bins.shape
     id_bins, id_map = id_bins.ravel(), id_map.ravel()
-    #print(trajectory.lon.values[id_bins], trajectory.lat.values[id_bins], LONS_STAT[id_map], LATS_STAT[id_map])
     _, _, dists = g.inv(trajectory.lon.values[id_bins], trajectory.lat.values[id_bins], LONS_STAT[id_map], LATS_STAT[id_map])
     dists = dists.reshape(id_bins_shape)
     iclosest = dists.argmin(axis=0)
@@ -790,28 +945,79 @@ def compute_proba_one_trajectory(trajectory, proba_model, snrs_selected = [1.,2.
     trajectory['lat_map'] = LATS_STAT[iclosest]
     trajectory['lon_map'] = LONS_STAT[iclosest]
 
-    #new_trajectories = pd.DataFrame()
-    probas = proba_model.proba_all # SNR x lats x lons
-    proba_total = np.ones(probas.shape[0])
+    delta_each_hour = 1./24.
+    f_traj_lat = interpolate.interp1d(trajectory.dt.values, trajectory.lat.values, bounds_error=False, fill_value=trajectory.lat.values[-1])
+    f_traj_lon = interpolate.interp1d(trajectory.dt.values, trajectory.lon.values, bounds_error=False, fill_value=trajectory.lon.values[-1])
     new_trajectory = pd.DataFrame()
-    probas_loc = probas.reshape((probas.shape[0], np.prod(probas.shape[1:])))
-    isnrs = [np.argmin(abs(snrs-snr)) for snr in snrs_selected]
+    for isnr, snr in tqdm(zip(isnrs, snrs_selected), total=len(isnrs), disable=disable_bar):
+        probas_snr_ravelled = probas[isnr].ravel()
+        time_start = 0.
+        proba_not_detecting = 1.
+        for _, one_dt in trajectory.groupby('bin_dt'):
+            time_end = time_start + 1.
+            times = np.arange(time_start, time_end, delta_each_hour)
+            lats_hours, lons_hour = f_traj_lat(times), f_traj_lon(times)
+            closest_cell = np.array([np.argmin(np.sqrt((lat-lats)**2+(lon-lons)**2)) for lat, lon in zip(lats_hours, lons_hour)])
+            proba_not_detecting *= np.prod((1.-probas_snr_ravelled[closest_cell])**delta_each_hour)
+            time_start = time_end
+
+            trajectory_loc = trajectory.loc[trajectory.index.isin(one_dt.index)].copy()
+            trajectory_loc['proba'] = 1.-proba_not_detecting
+            trajectory_loc['snr'] = snr
+            new_trajectory = pd.concat([new_trajectory, trajectory_loc])
+    new_trajectory.reset_index(drop=True, inplace=True)
+
+    ## Compute total probability
+    """
+    proba_total = np.ones(probas.shape[0])
+    #probas_loc = probas.reshape((probas.shape[0], np.prod(probas.shape[1:])))
+    new_trajectory = pd.DataFrame()
     for bin_dt, one_dt in tqdm(trajectory.groupby('bin_dt')):
+
+        ## Take average of probabilities in the bin
         proba_loc = np.zeros(probas.shape[0])
-        for _, one_loc in one_dt.iterrows():
-            proba_loc += probas_loc[:,int(one_loc.id_map)]/one_dt.shape[0]
+        for isnr in range(proba_loc.size):
+            l_probas = []
+            for _, one_loc in one_dt.iterrows():
+                l_probas.append( probas[isnr].ravel()[int(one_loc.id_map)] )
+            proba_loc[isnr] = np.median(l_probas)
         proba_total *= (1.-proba_loc)
         
         for isnr, snr in zip(isnrs, snrs_selected):
             trajectory_loc = trajectory.loc[trajectory.index.isin(one_dt.index)].copy()
-            trajectory_loc['proba'] = (1-proba_total[isnr])
+            trajectory_loc['proba'] = 1-proba_total[isnr]
             trajectory_loc['snr'] = snr
-            #trajectory_loc.loc[trajectory.index.isin(one_dt.index), 'proba'] = (1-proba_total[isnr])
-            new_trajectory = new_trajectory.append(trajectory_loc)
-    #new_trajectories = new_trajectories.append(trajectory_loc)
-    #new_trajectories.reset_index(drop=True, inplace=True)
-            
+            new_trajectory = pd.concat([new_trajectory, trajectory_loc])
+    """
     return new_trajectory
+
+def compute_multiple_trajectories(proba_model, winds, lats, lons, mission_durations):
+    
+    LATS, LONS = np.meshgrid(lats, lons)
+    LATS, LONS = LATS.ravel(), LONS.ravel()
+    
+    opt_trajectory = dict(
+        nstep_max=1000, 
+        time_max=3600*24*30*2,
+        save_trajectory=False,
+        folder = './data/',
+    )
+    pd_final_probas = pd.DataFrame()
+    for lat, lon in tqdm(zip(LATS, LONS), total=LATS.size):
+        start_location = [lat, lon] # lat, lon
+        trajectory = VCD.compute_trajectory(winds, start_location, **opt_trajectory)
+        new_trajectories = compute_proba_one_trajectory(trajectory, proba_model, norm_factor_time=3600., disable_bar=True) ## Venusquake
+        
+        for target_duration in mission_durations:
+            
+            days = new_trajectories.time/(3600*24)
+            pd_final_proba = new_trajectories.loc[days<=target_duration,:].groupby('snr').last().reset_index()[['snr', 'proba']]
+            pd_final_proba['lat'] = lat
+            pd_final_proba['lon'] = lon
+            pd_final_proba['duration'] = target_duration
+            pd_final_probas = pd.concat([pd_final_probas, pd_final_proba])
+        
+    return pd_final_probas
 
 #############################################
 ## VISUALIZATION PROBABILISTIC MODEL BELOW ##
@@ -820,35 +1026,101 @@ def compute_proba_one_trajectory(trajectory, proba_model, snrs_selected = [1.,2.
 def draw_screen_poly(xy, ax, legend, color='red'):
     #x, y = m( lons, lats )
     #xy = zip(x,y)
-    poly = Polygon( xy, facecolor=color, alpha=0.4, **legend )
+    poly = Polygon_mpl( xy, facecolor=color, alpha=0.4, **legend )
     ax.add_patch(poly)
 
-def plot_regions(m, ax, VENUS):
+def extract_coords(gdf):
+    points = []
+    for geom in gdf.geometry:
+        if geom.geom_type == 'LineString':
+            points.extend(list(geom.coords))
+    return points
 
-    color_dict = {'corona': 'tab:red', 'rift': 'tab:green', 'ridge': 'tab:blue', 'intraplate': 'white'}
+def plot_regions(m, ax, VENUS, use_active_corona=False):
+
+    if use_active_corona:
+        active_corona = gpd.read_file(f"./data/active_corona_shape/active_corona.shp").iloc[0].geometry
+
+    color_dict = {'corona': 'tab:red', 'rift': 'tab:green', 'ridge': 'tab:blue', 'intraplate': 'white', 'wrinkles': 'tab:green'}
     for region in VENUS:
+
         if region == 'intraplate':
             continue
-        print(f'Processing region {region}')
-        added_legend = False
-        for ext in tqdm(VENUS[region].exterior):
-            if ext is None:
-                continue
-            surface2 = [m(lon,lat) for lon, lat in list(ext.coords)]
-            
-            clustering = DBSCAN(eps=500000, min_samples=5).fit(np.array(surface2))
-            lines = []
-            for label in np.unique(clustering.labels_):
-                coords = np.array(surface2)[clustering.labels_==label]
-                legend = {}
-                draw_screen_poly(coords, ax, legend, color=color_dict[region])
-                
-    patches = [mpatches.Patch(facecolor=color_dict[region], label=region, alpha=0.5, edgecolor='black') for region in color_dict]
-    ax.legend(handles=patches, frameon=False, bbox_to_anchor=(0.95, -0.1), ncol=4, bbox_transform=ax.transAxes)
-    
-def interpolate_2d(current_map, lons, lats, toplot, dnew=1.):
 
-    lons_new = np.arange(lons.min(), lons.max(), 2*dnew)
+        print(f'Processing region {region}')
+        
+        if region == 'wrinkles':
+            points = extract_coords(VENUS[region])
+            points = np.array(points)
+            x_bins = np.linspace(-180., 180., 300)
+            y_bins = np.linspace(-90., 90., 150)
+            density, x_edges, y_edges = np.histogram2d(points[:,0], points[:,1], bins=[x_bins, y_bins])
+            x_edges, y_edges = np.meshgrid(x_edges, y_edges)
+            shape_init = x_edges.shape
+            x_edges, y_edges = x_edges.ravel(), y_edges.ravel()
+            x_edges, y_edges = m(x_edges, y_edges)
+            x_edges, y_edges = x_edges.reshape(shape_init), y_edges.reshape(shape_init)
+            density[density>1] = 1
+            m.pcolormesh(x_edges, y_edges, density.T, alpha=1, cmap='Greens',)
+            continue
+
+        for pol_in in tqdm(VENUS[region].explode(index_parts=False).reset_index(drop=True).geometry.values):
+
+            pol = pol_in
+            if pol.geom_type == 'LineString':
+                pol = pol.buffer(0.01)
+
+            ext_in = pol.exterior
+            if ext_in is None:
+                continue
+
+            ext_all = [ext_in]
+            if use_active_corona and region == 'corona':
+                save = ext_all[0]
+                ext_all = []
+                for active_pol in active_corona.geoms:
+                    ext_all_loc = active_pol.intersection(Polygon(save).buffer(0))
+                    if ext_all_loc.geom_type == 'MultiPolygon':
+                        ext_all_loc = [geo.exterior for geo in ext_all_loc.geoms]
+                    else:
+                        ext_all_loc = [ext_all_loc.exterior]
+                    ext_all += ext_all_loc
+            
+            #print(m(-180., -40.), m(0., -40.), m(130., -40.), m(300., -40.), m(360., -40.))
+            for ext in ext_all:
+
+                surface2 = [m(lon,lat) for lon, lat in list(ext.coords)]
+                if len(surface2) == 0:
+                    continue
+                
+                clustering = DBSCAN(eps=500000, min_samples=5).fit(np.array(surface2))
+                #lines = []
+                for label in np.unique(clustering.labels_):
+                    coords = np.array(surface2)[clustering.labels_==label]
+                    legend = {}
+                    draw_screen_poly(coords, ax, legend, color=color_dict[region])
+                
+    #if not region == 'wrinkles':
+    change_label = {'wrinkles': 'Wrinkle Ridges', 'corona': 'Coronae', 'ridge': 'Ridges', 'rift': 'Rifts'}
+    patches = [mpatches.Patch(facecolor=color_dict[region], label=change_label[region], alpha=0.5, edgecolor='black') for region in VENUS]
+    if 'ridge' in VENUS: ## Add intraplate
+        patches += [mpatches.Patch(facecolor='white', label='Intraplate', alpha=0.5, edgecolor='black')]
+    ax.legend(handles=patches, frameon=False, bbox_to_anchor=(1.1, -0.1), ncol=4, bbox_transform=ax.transAxes)
+    m.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=10)
+    m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=10)
+    
+def interpolate_2d(current_map, lons_in, lats, toplot_in, dnew=1.):
+
+    toplot = toplot_in.copy()
+    lons = lons_in.copy()
+    if lons_in.max() > 180.:
+        lons[lons>=180.] -= 360.
+    idx = np.argsort(lons)
+    toplot[:,:] = toplot[idx,:]
+    lons = lons[idx]
+
+    #lons_new = np.arange(lons.min(), lons.max(), 2*dnew)
+    lons_new = np.arange(-180., 180., 2*dnew)
     lats_new = np.arange(lats.min(), lats.max(), dnew)
     
     LAT, LON = np.meshgrid(lats_new, lons_new)
@@ -856,9 +1128,10 @@ def interpolate_2d(current_map, lons, lats, toplot, dnew=1.):
     x, y = current_map(LON.ravel(), LAT.ravel())
     x, y = x.reshape(shape), y.reshape(shape)
     
-    #print(lons.shape, lats.shape, toplot.shape, lons_new.shape, lats_new.shape, shape)
-    interpolator = RectBivariateSpline(lons, lats, toplot.T, kx=1, ky=1)
-    #plt.figure()
+    #interpolator = RectBivariateSpline(lons, lats, toplot.T, kx=1, ky=1)
+    interpolator = RectBivariateSpline(lons, lats, toplot, kx=1, ky=1)
+
+    #print(lons_new.min(), lons_new.max(), lons.min(), lons.max())
 
     #LAT, LON = np.meshgrid(lats_new, lons_new)
     #shape_ = LON.shape
@@ -868,7 +1141,7 @@ def interpolate_2d(current_map, lons, lats, toplot, dnew=1.):
     #plt.pcolormesh(y, x, toplot)
 
 
-    return x, y, toplot
+    return x, y, toplot, lons_new, lats_new
 
 def one_map(ax, fig, proba, lats, lons, SNR_thresholds, snr, n_colors, show_title,  c_cbar = 'white', l_snr_to_plot=[], low_cmap=[], high_cmap=[], interpolate=True, proba_all_homo=None):
     
@@ -885,7 +1158,7 @@ def one_map(ax, fig, proba, lats, lons, SNR_thresholds, snr, n_colors, show_titl
         toplot /= proba_all_homo[isnr,0,0]*1e2
         toplot = 1e2*(1.-toplot)
     
-    fmt = lambda x, pos: '{:.1f}'.format(x) # 
+    fmt = lambda x, pos: '{:.2f}'.format(x) # 
     if l_snr_to_plot:
         isnr = np.argmin(abs(SNR_thresholds-l_snr_to_plot[0]))
         toplot = proba[isnr,:]*1e2
@@ -897,25 +1170,32 @@ def one_map(ax, fig, proba, lats, lons, SNR_thresholds, snr, n_colors, show_titl
         if l_snr_to_plot:
             ax.set_title(f'$\%$ of probability decrease')
         else:
-            ax.set_title(f'SNR {SNR_thresholds[isnr]:.2f}')
+            ax.set_title(f'SNR {SNR_thresholds[isnr]:.0f}')
             
     
     if interpolate:
-        x, y, toplot = interpolate_2d(m, lons, lats, toplot, dnew=1.)
+        x, y, toplot, lons_new, lats_new = interpolate_2d(m, lons, lats, toplot, dnew=1.)
 
     #print(low_cmap)
     if l_snr_to_plot or len(low_cmap)==0:
         cmap_bounds = np.linspace(toplot.min(), toplot.max(), n_colors)
+        cmap = cm.get_cmap("Reds", lut=len(cmap_bounds))
     else:
         cmap_bounds = [0] + [c for c in low_cmap] + [c for c in high_cmap] # ISSI
     
-    #print(l_snr_to_plot or len(low_cmap)==0, cmap_bounds, toplot.min(), toplot.max())
+        # Create low and high colormaps
+        low_cmap_ = cm.get_cmap('Blues_r', len(low_cmap)+1)
+        high_cmap_ = cm.get_cmap('Reds', len(high_cmap))
 
-    cmap = cm.get_cmap("viridis", lut=len(cmap_bounds))
+        # Combine the colors from both colormaps
+        combined_colors = np.vstack((low_cmap_(np.linspace(0, 1, len(low_cmap)+1)), high_cmap_(np.linspace(0, 1, len(high_cmap)))))
+        cmap = mcol.ListedColormap(combined_colors)
+
     norm = mcol.BoundaryNorm(cmap_bounds, cmap.N)
     
-        
     sc = m.pcolormesh(x, y, toplot, alpha=1, cmap=cmap, norm=norm)
+    m.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=12)
+    m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=12)
 
     axins = inset_axes(ax, width="3%", height="100%", loc='lower left', bbox_to_anchor=(1.03, 0., 1, 1.), bbox_transform=ax.transAxes, borderpad=0)
     axins.tick_params(axis='both', which='both', labelbottom=False, labelleft=False, bottom=False, left=False)
@@ -924,11 +1204,11 @@ def one_map(ax, fig, proba, lats, lons, SNR_thresholds, snr, n_colors, show_titl
     fontsize = 14.
     cbar.ax.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
     if not l_snr_to_plot:
-        cbar.set_label('Detection probability', rotation=270, labelpad=15, color=c_cbar, fontsize=fontsize)
+        cbar.set_label('Detection probability (in %)', rotation=270, labelpad=15, color=c_cbar, fontsize=fontsize)
 
     return m
     
-def plot_map(proba_model, VENUS, l_snr_to_plot=[], c_cbar='white', n_colors=20, show_title=True, low_cmap=[], high_cmap=[], proba_all_homo=None, plot_all_regions=False, plot_volcanoes=False):
+def plot_map(proba_model, VENUS, l_snr_to_plot=[], c_cbar='white', n_colors=20, show_title=True, low_cmap=[], high_cmap=[], proba_all_homo=None, plot_all_regions=False, plot_volcanoes=False, use_active_corona=False):
     
     lats = proba_model.all_lats
     lons = proba_model.all_lons
@@ -954,16 +1234,16 @@ def plot_map(proba_model, VENUS, l_snr_to_plot=[], c_cbar='white', n_colors=20, 
     ax = fig.add_subplot(grid[1, 0])
     _ = one_map(ax, fig, proba, lats, lons, SNR_thresholds, snr, n_colors, show_title, c_cbar=c_cbar, l_snr_to_plot=l_snr_to_plot)
     
-    if plot_all_regions:
+    if plot_all_regions and VENUS is not None:
         ax = fig.add_subplot(grid[1, 1])
         m = Basemap(projection='robin', lon_0=0, ax=ax)
         m.scatter(0., 0., latlon=True, s=0.1)
-        plot_regions(m, ax, VENUS)
+        plot_regions(m, ax, VENUS, use_active_corona=use_active_corona)
         
     fig.subplots_adjust(top=0.8, wspace=0.3)
     #fig.savefig('./test_data_Venus/map_probas.png', dpi=800., transparent=True)
 
-def one_map_traj(fig, ax, lats, lons, new_trajectories_snr, VENUS, n_colors=10, c_cbar='white', fontsize=12., plot_time=False):
+def one_map_traj(fig, ax, lats, lons, new_trajectories_snr, VENUS, n_colors=10, c_cbar='white', fontsize=12., plot_time=False, alpha_traj=0.5, add_cbar=True):
     
     snr = new_trajectories_snr.snr.iloc[0]
     
@@ -974,7 +1254,7 @@ def one_map_traj(fig, ax, lats, lons, new_trajectories_snr, VENUS, n_colors=10, 
     x, y = m(LON.ravel(), LAT.ravel())
     x, y = x.reshape(shape), y.reshape(shape)
 
-    fmt = lambda x, pos: '{:.1f}'.format(x) # 
+    fmt = lambda x, pos: '{:.0f}'.format(x) # 
     
     if plot_time:
         cmap_bounds = np.linspace(new_trajectories_snr.time.min()/(24*3600.), new_trajectories_snr.time.max()/(24*3600.), n_colors)
@@ -990,22 +1270,23 @@ def one_map_traj(fig, ax, lats, lons, new_trajectories_snr, VENUS, n_colors=10, 
             
     #sc = m.pcolormesh(x, y, toplot, alpha=1, cmap=cmap, norm=norm)
     if plot_time:
-        sc = m.scatter(new_trajectories_snr.lon, new_trajectories_snr.lat, c=new_trajectories_snr.time/(24*3600.), cmap=cmap, norm=norm, latlon=True, zorder=10)
+        sc = m.scatter(new_trajectories_snr.lon, new_trajectories_snr.lat, c=new_trajectories_snr.time/(24*3600.), s=5, cmap=cmap, norm=norm, latlon=True, zorder=10, alpha=alpha_traj)
     else:
-        sc = m.scatter(new_trajectories_snr.lon, new_trajectories_snr.lat, c=new_trajectories_snr.proba*1e2, cmap=cmap, norm=norm, latlon=True, zorder=10)
+        sc = m.scatter(new_trajectories_snr.lon, new_trajectories_snr.lat, c=new_trajectories_snr.proba*1e2, s=5, cmap=cmap, norm=norm, latlon=True, zorder=10, alpha=alpha_traj)
     
-    axins = inset_axes(ax, width="80%", height="3%", loc='lower left', bbox_to_anchor=(0.1, 1.03, 1, 1.), bbox_transform=ax.transAxes, borderpad=0)
-    axins.tick_params(axis='both', which='both', labelbottom=False, labelleft=False, bottom=False, left=False)
-    cbar = fig.colorbar(sc, format=FuncFormatter(fmt), cax=axins, orientation='horizontal', extend='both', ticks=cmap_bounds[1:],)
-    
-    if plot_time:
-        name_cbar = f'Time (days) for SNR={snr:.1f}'
-    else:
-        name_cbar = f'Detection probability (%) for SNR={snr:.1f}'
-    cbar.set_label(name_cbar, rotation=0, labelpad=10, color=c_cbar, fontsize=fontsize)
-    axins.xaxis.set_label_position('top')
-    axins.xaxis.set_ticks_position('top')
-    cbar.ax.tick_params(axis='both', colors=c_cbar, labelsize=fontsize-2., )
+    if add_cbar:
+        axins = inset_axes(ax, width="80%", height="3%", loc='lower left', bbox_to_anchor=(0.1, 1.03, 1, 1.), bbox_transform=ax.transAxes, borderpad=0)
+        axins.tick_params(axis='both', which='both', labelbottom=False, labelleft=False, bottom=False, left=False)
+        cbar = fig.colorbar(sc, format=FuncFormatter(fmt), cax=axins, orientation='horizontal', extend='both', ticks=cmap_bounds[1:],)
+        
+        if plot_time:
+            name_cbar = f'Time (days)'
+        else:
+            name_cbar = f'Detection probability (%) for SNR={snr:.1f}'
+        cbar.set_label(name_cbar, rotation=0, labelpad=10, color=c_cbar, fontsize=fontsize)
+        axins.xaxis.set_label_position('top')
+        axins.xaxis.set_ticks_position('top')
+        cbar.ax.tick_params(axis='both', colors=c_cbar, labelsize=fontsize-2., )
 
     if VENUS is not None:
         patches = [mpatches.Patch(facecolor=color_dict[region], label=region, alpha=0.5, edgecolor='black') for region in color_dict]
@@ -1013,15 +1294,25 @@ def one_map_traj(fig, ax, lats, lons, new_trajectories_snr, VENUS, n_colors=10, 
     
     return m
     
-def plot_trajectory(new_trajectories_total, proba_model, VENUS, snr=1., n_colors=10, c_cbar='white', fontsize=15., ylim=[0., 20.], plot_time=False, plot_volcanoes=False):
+def add_vertical_cbar(fig, ax, sc, cmap_bounds, fmt, c_cbar, name_cbar):
+
+    axins = inset_axes(ax, width="3%", height="80%", loc='lower left', bbox_to_anchor=(1.03, 0.1, 1, 1.), bbox_transform=ax.transAxes, borderpad=0)
+    axins.tick_params(axis='both', which='both', labelbottom=False, labelleft=False, bottom=False, left=False)
+    cbar = fig.colorbar(sc, format=FuncFormatter(fmt), cax=axins, orientation='vertical', extend='both', ticks=cmap_bounds[:],)
+    cbar.set_label(name_cbar, rotation=90, labelpad=10, color=c_cbar, fontsize=12)
+    cbar.ax.tick_params(axis='both', colors=c_cbar, labelsize=12., )
+
+def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=1., n_colors=10, c_cbar='white', fontsize=15., ylim=[0., 20.], plot_time=False, plot_volcanoes=False):
     
     lats, lons = proba_model.all_lats, proba_model.all_lons
     
-    fig = plt.figure(figsize=(14,4))
-    grid = fig.add_gridspec(1, 2)
+    fig = plt.figure(figsize=(14,8))
+    grid = fig.add_gridspec(2, 2)
         
-    ax = fig.add_subplot(grid[:, 0])
-    ax_vs_time = fig.add_subplot(grid[:, 1])
+    ax = fig.add_subplot(grid[0, 1])
+    ax_winds = fig.add_subplot(grid[1, 1])
+    ax_vs_time = fig.add_subplot(grid[0, 0])
+    ax_vs_lon = fig.add_subplot(grid[1, 0], sharex=ax_vs_time)
     
     iseismicity = -1
     linestyles = ['-', '--', ':']
@@ -1034,15 +1325,45 @@ def plot_trajectory(new_trajectories_total, proba_model, VENUS, snr=1., n_colors
         if iseismicity == 0:
             new_trajectories_snr = new_trajectories.loc[new_trajectories.snr==snr]
             m = one_map_traj(fig, ax, lats, lons, new_trajectories_snr, VENUS, n_colors=n_colors, c_cbar=c_cbar, fontsize=fontsize, plot_time=plot_time)
+            m_winds = one_map_traj(fig, ax_winds, lats, lons, new_trajectories_snr, None, n_colors=n_colors, c_cbar=c_cbar, fontsize=fontsize, plot_time=plot_time, add_cbar=False)
             
             if VENUS is None:
+
+                n_colors = 10
+                fmt = lambda x, pos: '{:.2f} %'.format(x*1e2)
                 idx_snr = np.argmin(abs(proba_model.SNR_thresholds-snr))
-                x, y, toplot = interpolate_2d(m, proba_model.all_lons, proba_model.all_lats, proba_model.proba_all[idx_snr,:,:], dnew=1.)
-                m.pcolormesh(x, y, toplot, zorder=0, cmap='Reds')
+                x, y, toplot, _, _ = interpolate_2d(m, proba_model.all_lons, proba_model.all_lats, proba_model.proba_all[idx_snr,:,:], dnew=1.)
+                cmap_bounds = np.linspace(toplot.min(), toplot.max(), n_colors)
+                cmap_p = cm.get_cmap("Reds", lut=len(cmap_bounds))
+                norm = mcol.BoundaryNorm(cmap_bounds, cmap_p.N)
+                sc_proba = m.pcolormesh(x, y, toplot, zorder=0, cmap=cmap_p, norm=norm)
+                m.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=12)
+                m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=12)
+                add_vertical_cbar(fig, ax, sc_proba, cmap_bounds, fmt, c_cbar, 'Hourly probability') 
+
+                n_colors = 7
+                fmt = lambda x, pos: '{:.0f}'.format(x)
+                unknown = 'wind_direction'
+                vmax, vmin = -88, -92
+                winds_grp = winds.groupby(['lat', 'lon']).first().reset_index()
+                lat_size = winds_grp.lat.unique().size
+                lon_size = winds_grp.lon.unique().size
+                LON, LAT = np.meshgrid(winds_grp.lon.unique(), winds_grp.lat.unique())
+                x, y = m_winds(LON.ravel(), LAT.ravel())
+                x, y = x.reshape(lat_size, lon_size), y.reshape(lat_size, lon_size)
+                cmap_bounds = np.linspace(vmin, vmax, n_colors)
+                cmap_w = cm.get_cmap("Greens", lut=len(cmap_bounds))
+                norm = mcol.BoundaryNorm(cmap_bounds, cmap_w.N)
+                sc_winds = m_winds.pcolormesh(x, y, winds_grp[unknown].values.reshape(lat_size, lon_size), norm=norm, cmap=cmap_w, alpha=0.8, zorder=5)
+                add_vertical_cbar(fig, ax_winds, sc_winds, cmap_bounds, fmt, c_cbar, 'Wind direction')    
+
+                m_winds.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=12)
+                m_winds.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=12)
             
             if plot_volcanoes:
                 x, y = m(proba_model.lon_volcanoes, proba_model.lat_volcanoes)
                 m.scatter(x, y, marker='x', color='black', s=30)
+                m_winds.scatter(x, y, marker='x', color='black', s=30)
             
         isnr = -1
         for snr, new_trajectories_snr in new_trajectories.groupby('snr'):
@@ -1054,10 +1375,24 @@ def plot_trajectory(new_trajectories_total, proba_model, VENUS, snr=1., n_colors
             if isnr == 0:
                 lines_seismicity.append(line)
             
+    ax_vs_lon.plot(new_trajectories_snr.time/(24*3600.), new_trajectories_snr.lon, label='longitude', color='black')
+    ax_vs_lon.plot([0., 0.], [0., 0.], label='latitude', color='tab:red')
+    ax_vs_lon.legend(loc='upper left', frameon=False, labelcolor=c_cbar, fontsize=fontsize)
+    ax_vs_lon.set_ylabel('Longitude', color=c_cbar, fontsize=fontsize)
+    ax_vs_lat = ax_vs_lon.twinx()  # instantiate a second Axes that shares the same x-axis
+    ax_vs_lat.plot(new_trajectories_snr.time/(24*3600.), new_trajectories_snr.lat, label='latitude', color='tab:red')
+    ax_vs_lat.set_xlabel('Time (days)', color=c_cbar, fontsize=fontsize)
+    ax_vs_lat.grid(alpha=0.4)
+    ax_vs_lon.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
+    ax_vs_lat.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
+    ax_vs_lat.set_ylabel('Latitude', fontsize=fontsize, color='tab:red')
+    ax_vs_lat.tick_params(axis='y', labelcolor='tab:red')
+
     #ax_vs_time.legend(frameon=False, title='SNR')
-    ax_vs_time.set_xlabel('Time (days)', color=c_cbar, fontsize=fontsize)
     ax_vs_time.set_ylabel('Detection probability (%)', color=c_cbar, fontsize=fontsize)
+    ax_vs_time.set_xlim([0., new_trajectories_snr.time.max()/(24*3600.)])
     ax_vs_time.set_ylim(ylim)
+    ax_vs_time.grid(alpha=0.4)
     
     # Creating the first legend
     first_legend = ax_vs_time.legend(handles=lines_snr, loc='upper left', title='SNR', frameon=False, labelcolor=c_cbar, fontsize=fontsize)
