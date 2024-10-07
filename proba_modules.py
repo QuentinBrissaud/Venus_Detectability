@@ -991,19 +991,20 @@ def compute_proba_one_trajectory(trajectory_in, proba_model, snrs_selected=[1.,2
     """
     return new_trajectory
 
-def compute_multiple_trajectories(proba_model, winds, lats, lons, mission_durations):
+def compute_multiple_trajectories(proba_model, winds, mission_durations, max_number_months, inputs):
     
-    LATS, LONS = np.meshgrid(lats, lons)
-    LATS, LONS = LATS.ravel(), LONS.ravel()
+    #LATS, LONS = np.meshgrid(lats, lons)
+    #LATS, LONS = LATS.ravel(), LONS.ravel()
+    icpu, LATS, LONS = inputs
     
     opt_trajectory = dict(
         nstep_max=1000, 
-        time_max=3600*24*30*2,
+        time_max=3600*24*30*max_number_months,
         save_trajectory=False,
         folder = './data/',
     )
     pd_final_probas = pd.DataFrame()
-    for lat, lon in tqdm(zip(LATS, LONS), total=LATS.size):
+    for lat, lon in tqdm(zip(LATS, LONS), total=LATS.size, disable=not icpu==0):
         start_location = [lat, lon] # lat, lon
         trajectory = VCD.compute_trajectory(winds, start_location, **opt_trajectory)
         new_trajectories = compute_proba_one_trajectory(trajectory, proba_model, norm_factor_time=3600., disable_bar=True) ## Venusquake
@@ -1016,6 +1017,47 @@ def compute_multiple_trajectories(proba_model, winds, lats, lons, mission_durati
             pd_final_proba['lon'] = lon
             pd_final_proba['duration'] = target_duration
             pd_final_probas = pd.concat([pd_final_probas, pd_final_proba])
+        
+    return pd_final_probas
+
+from functools import partial
+from multiprocessing import get_context
+def compute_multiple_trajectories_CPUs(proba_model, winds, LATS, LONS, mission_durations, max_number_months=4, nb_CPU=10):
+
+    partial_compute_surfaces = partial(compute_multiple_trajectories, proba_model, winds, mission_durations, max_number_months)
+    nb_chunks = LATS.shape[0]
+    idx_start_all = np.arange(nb_chunks)
+    
+    N = min(nb_CPU, nb_chunks)
+    ## If one CPU requested, no need for deployment
+    if N == 1:
+        print('Running serial')
+        pd_final_probas = partial_compute_surfaces((0, LATS, LONS))
+
+    ## Otherwise, we pool the processes
+    else:
+    
+        step_idx =  nb_chunks//N
+        list_of_lists = []
+        idxs = []
+        for i in range(N):
+            idx = np.arange(i*step_idx, (i+1)*step_idx)
+            if i == N-1:
+                idx = np.arange(i*step_idx, nb_chunks)
+            idxs.append(idx_start_all[idx][0])
+            list_of_lists.append( (i, LATS[idx_start_all[idx]], LONS[idx_start_all[idx]]) )
+
+        with get_context("spawn").Pool(processes = N) as p:
+            print(f'Running across {N} CPU')
+            all_pd_final_probas = p.map(partial_compute_surfaces, list_of_lists)
+            p.close()
+            p.join()
+
+        pd_final_probas = gpd.GeoDataFrame()
+        for idx, pd_final_probas_loc in zip(idxs, all_pd_final_probas):
+            #gdf_loc['iscenario'] += idx
+            pd_final_probas = pd.concat([pd_final_probas, pd_final_probas_loc], ignore_index=True)
+        pd_final_probas.reset_index(drop=True, inplace=True)
         
     return pd_final_probas
 
