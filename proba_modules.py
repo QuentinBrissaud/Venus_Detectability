@@ -1088,7 +1088,7 @@ def extract_coords(gdf):
             points.extend(list(geom.coords))
     return points
 
-def plot_regions(m, ax, VENUS, use_active_corona=False):
+def plot_regions(m, ax, VENUS, use_active_corona=False, plot_lines=True):
 
     if use_active_corona:
         active_corona = gpd.read_file(f"./data/active_corona_shape/active_corona.shp").iloc[0].geometry
@@ -1158,8 +1158,9 @@ def plot_regions(m, ax, VENUS, use_active_corona=False):
     if 'ridge' in VENUS: ## Add intraplate
         patches += [mpatches.Patch(facecolor='white', label='Intraplate', alpha=0.5, edgecolor='black')]
     ax.legend(handles=patches, frameon=False, bbox_to_anchor=(1.1, -0.1), ncol=4, bbox_transform=ax.transAxes)
-    m.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=10)
-    m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=10)
+    if plot_lines:
+        m.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=10)
+        m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=10)
     
 def interpolate_2d(current_map, lons_in, lats, toplot_in, dnew=1.):
 
@@ -1327,8 +1328,8 @@ def one_map_traj(fig, ax, lats, lons, new_trajectories_snr, VENUS, n_colors=10, 
         sc = m.scatter(new_trajectories_snr.lon, new_trajectories_snr.lat, c=new_trajectories_snr.proba*1e2, s=5, cmap=cmap, norm=norm, latlon=True, zorder=10, alpha=alpha_traj)
     
     if add_cbar:
-        axins = inset_axes(ax, width="80%", height="3%", loc='lower left', bbox_to_anchor=(0.1, 1.03, 1, 1.), bbox_transform=ax.transAxes, borderpad=0)
-        axins.tick_params(axis='both', which='both', labelbottom=False, labelleft=False, bottom=False, left=False)
+        axins = inset_axes(ax, width="80%", height="6%", loc='lower left', bbox_to_anchor=(0.1, -.2, 1, 1.), bbox_transform=ax.transAxes, borderpad=0)
+        axins.tick_params(axis='both', which='both', labeltop=False, labelleft=False, top=False, left=False)
         cbar = fig.colorbar(sc, format=FuncFormatter(fmt), cax=axins, orientation='horizontal', extend='both', ticks=cmap_bounds[1:],)
         
         if plot_time:
@@ -1336,8 +1337,8 @@ def one_map_traj(fig, ax, lats, lons, new_trajectories_snr, VENUS, n_colors=10, 
         else:
             name_cbar = f'Detection probability (%) for SNR={snr:.1f}'
         cbar.set_label(name_cbar, rotation=0, labelpad=10, color=c_cbar, fontsize=fontsize)
-        axins.xaxis.set_label_position('top')
-        axins.xaxis.set_ticks_position('top')
+        axins.xaxis.set_label_position('bottom')
+        axins.xaxis.set_ticks_position('bottom')
         cbar.ax.tick_params(axis='both', colors=c_cbar, labelsize=fontsize-2., )
 
     if VENUS is not None:
@@ -1361,10 +1362,10 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     fig = plt.figure(figsize=(14,8))
     grid = fig.add_gridspec(2, 2)
         
-    ax = fig.add_subplot(grid[0, 1])
-    ax_winds = fig.add_subplot(grid[1, 1])
-    ax_vs_time = fig.add_subplot(grid[0, 0])
-    ax_vs_lon = fig.add_subplot(grid[1, 0], sharex=ax_vs_time)
+    ax = fig.add_subplot(grid[1, 1])
+    ax_winds = fig.add_subplot(grid[0, 1])
+    ax_vs_time = fig.add_subplot(grid[1, 0])
+    ax_vs_lon = fig.add_subplot(grid[0, 0], sharex=ax_vs_time)
     
     iseismicity = -1
     linestyles = ['-', '--', ':']
@@ -1433,7 +1434,6 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     ax_vs_lon.set_ylabel('Longitude', color=c_cbar, fontsize=fontsize)
     ax_vs_lat = ax_vs_lon.twinx()  # instantiate a second Axes that shares the same x-axis
     ax_vs_lat.plot(new_trajectories_snr.time/(24*3600.), new_trajectories_snr.lat, label='latitude', color='tab:red')
-    ax_vs_lat.set_xlabel('Time (days)', color=c_cbar, fontsize=fontsize)
     ax_vs_lat.grid(alpha=0.4)
     ax_vs_lon.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
     ax_vs_lat.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
@@ -1442,6 +1442,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
 
     #ax_vs_time.legend(frameon=False, title='SNR')
     ax_vs_time.set_ylabel('Detection probability (%)', color=c_cbar, fontsize=fontsize)
+    ax_vs_time.set_xlabel('Time (days)', color=c_cbar, fontsize=fontsize)
     ax_vs_time.set_xlim([0., new_trajectories_snr.time.max()/(24*3600.)])
     ax_vs_time.set_ylim(ylim)
     ax_vs_time.grid(alpha=0.4)
@@ -1461,9 +1462,16 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     ax_vs_time.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
     plt.setp(first_legend.get_title(), color=c_cbar, fontsize=fontsize)
     
+    fontsize_label = 20.
+    ax_vs_lon.text(-0.07, 1., 'a)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax_vs_lon.transAxes)
+    ax_winds.text(-0.1, 1., 'b)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax_winds.transAxes)
+    ax_vs_time.text(-0.07, 1., 'c)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax_vs_time.transAxes)
+    ax.text(-0.1, 1., 'd)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax.transAxes)
+    
+    fig.align_ylabels() 
     fig.subplots_adjust(wspace=0.15, bottom=0.2, top=0.8)
     fig.patch.set_alpha(0.)
-    #fig.savefig('./test_data_Venus/balloon_proba.png', dpi=800, transparent=True)
+    fig.savefig('./figures/Figure_2_balloon_proba.pdf',)
 
 
 ##########################

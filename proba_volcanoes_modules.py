@@ -175,9 +175,10 @@ def add_cbar(ax, sc, label, fontsize=12.):
     cbar.ax.xaxis.tick_top()
     cbar.ax.set_xlabel(label, labelpad=2, fontsize=fontsize) 
 
-def plot_proba_sequence(amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offset, lat_offset, LAT_offset_shape, mask, noise_level = 0.01, factor = (np.log10(2.)+4.)/4., snr_threshold=1, fontsize=12.):
+def plot_proba_sequence(amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offset, lat_offset, LAT_offset_shape, mask, noise_level = 0.01, factor = (np.log10(2.)+4.)/4., snr_threshold=1, plot_SNR_distrib=True, fontsize=12.):
 
     dists = np.logspace(0, 4.*factor, 100)
+    fontsize_label = 20.
     
     cmap = plt.cm.coolwarm  # define the colormap
     cmaplist = [cmap(i) for i in range(cmap.N)]
@@ -189,36 +190,68 @@ def plot_proba_sequence(amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offse
     #mags_ev_reshaped = np.take_along_axis(mags_ev*(mask), idamp, axis=0)[0].reshape(LAT_offset_shape) # lon x lat x t0
     ID_TIMES_EV, DISTS = np.meshgrid(np.arange(all_times.size), dists)
 
-    fig = plt.figure(figsize=(11,11))
+    fig = plt.figure(figsize=(8,5))
     grid = fig.add_gridspec(2, 2)
 
-    ax = fig.add_subplot(grid[0,0])
-    ax.scatter(all_times, all_mags, c=all_mags, cmap='magma', vmin=1., vmax=all_mags.max())
-    ax.set_xlabel('Time (years since main shock)')
-    ax.set_ylabel('Magnitude (Mw)')
+    ax_first = fig.add_subplot(grid[0,0])
+    ax_first.scatter(all_times, all_mags, c=all_mags, cmap='Reds', vmin=1., vmax=all_mags.max())
+    ax_first.set_xlabel('Time (years since main shock)', fontsize=fontsize)
+    ax_first.set_ylabel('Magnitude (Mw)', fontsize=fontsize)
+    ax_first.tick_params(axis='both', labelsize=fontsize)
+    ax_first.text(-0.1, 1., 'a)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax_first.transAxes)
 
-    ax = fig.add_subplot(grid[0,1], sharex=ax)
-    ZTL = TL_new(DISTS.T, all_mags[ID_TIMES_EV].T)/noise_level
-    #sc = ax.contourf(all_times[ID_TIMES_EV], DISTS, TL_new(DISTS, all_mags[ID_TIMES_EV])/noise_level, levels=[0.1, 0.5, 1, 5, 10], locator=ticker.LogLocator(), cmap='Blues', )
-    sc = ax.pcolormesh(all_times, dists, ZTL.T, norm=colors.LogNorm(vmin=0.1, vmax=10), cmap=cmap)
-    ax.set_xlabel('Time (years since main shock)', fontsize=fontsize)
-    ax.set_ylabel('Distance (km)', fontsize=fontsize)
-    ax.set_yscale('log')
-    add_cbar(ax, sc, f'Peak SNR', fontsize=fontsize)
-    ax.set_facecolor(cmaplist[0])
+    if plot_SNR_distrib:
+        ax = fig.add_subplot(grid[0,1],)
+        field = amps_ev_reshaped.ravel()/noise_level
+        bins = np.logspace(np.log10(0.1),np.log10(10.), 50)
+        #bins = np.linspace(0.1,10., 50)
+        hist = ax.hist(field, bins=bins, log=True, density=True)
 
-    ax = fig.add_subplot(grid[1,1], sharex=ax)
+        vals = []
+        ax_proba = ax.twinx()
+        for threshold in hist[1][:-1]:
+            idx = hist[1][:-1] >= threshold
+            integral = np.trapz(hist[0][idx], x=hist[1][:-1][idx])/np.trapz(hist[0][:], x=hist[1][:-1][:])
+            vals.append( integral )
+        ax_proba.plot(hist[1][:-1], vals, color='tab:red', label='P(>SNR)')
+        ax_proba.legend(frameon=False)
+        ax_proba.set_xscale('log')
+        ax_proba.set_yscale('log')
+        ax_proba.tick_params(axis='y', labelcolor='tab:red')
+        ax_proba.set_ylim([1e-2, 1e1])
+        ax_proba.tick_params(axis='both', labelsize=fontsize)
+        ax.set_xlabel('SNR', fontsize=fontsize)
+        ax.set_ylabel('Probability Density Function', fontsize=fontsize)
+        ax.set_xscale('log')
+        ax.set_ylim([1e-2, 1e1])
+        ax.tick_params(axis='both', labelsize=fontsize)
+
+    else:
+        ax = fig.add_subplot(grid[0,1], sharex=ax_first)
+        ZTL = TL_new(DISTS.T, all_mags[ID_TIMES_EV].T)/noise_level
+        #sc = ax.contourf(all_times[ID_TIMES_EV], DISTS, TL_new(DISTS, all_mags[ID_TIMES_EV])/noise_level, levels=[0.1, 0.5, 1, 5, 10], locator=ticker.LogLocator(), cmap='Blues', )
+        sc = ax.pcolormesh(all_times, dists, ZTL.T, norm=colors.LogNorm(vmin=0.1, vmax=10), cmap=cmap)
+        ax.set_xlabel('Time\n(years since main shock)', fontsize=fontsize)
+        ax.set_ylabel('Distance (km)', fontsize=fontsize)
+        ax.set_yscale('log')
+        add_cbar(ax, sc, f'Peak SNR', fontsize=fontsize)
+        ax.set_facecolor(cmaplist[0])
+    ax.text(-0.13, 1., 'b)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax.transAxes)
+
+    ax = fig.add_subplot(grid[1,1], sharex=ax_first)
     Z = amps_ev_reshaped.max(axis=0)/noise_level
     sc = ax.pcolormesh(t0s_offset, lat_offset+lat_vol, Z, norm=colors.LogNorm(vmin=0.1, vmax=10), cmap=cmap)
     #sc = plt.pcolormesh(t0s_offset, lat_offset, amps_ev_reshaped.max(axis=0))
     #sc = plt.pcolormesh(t0s_offset, lat_offset, mags_ev_reshaped.max(axis=0))
     #sc = plt.pcolormesh(lon_offset, lat_offset, np.log(amps_ev_reshaped.mean(axis=-1)).T)
     #sc = plt.pcolormesh(t0s_offset, lat_offset, distances_ev_reshaped.min(axis=0))
-    ax.set_xlabel('Balloon start time (years since main shock)', fontsize=fontsize)
+    ax.set_xlabel('Balloon start time\n(years since main shock)', fontsize=fontsize)
     ax.set_ylabel('Balloon start latitude (deg)', fontsize=fontsize)
     add_cbar(ax, sc, f'Peak SNR', fontsize=fontsize)
     ax.set_facecolor(cmaplist[0])
     ax.axhline(lat_vol, color='black', linestyle='--', alpha=0.5)
+    ax.tick_params(axis='both', labelsize=fontsize)
+    ax.text(-0.13, 1., 'd)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax.transAxes)
 
     cmap = plt.cm.Greens  # define the colormap
     cmaplist = [cmap(i) for i in range(cmap.N)]
@@ -232,10 +265,15 @@ def plot_proba_sequence(amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offse
     ax = fig.add_subplot(grid[1,0], sharex=ax)
     Z = number_over_snr.max(axis=0)
     sc = ax.pcolormesh(t0s_offset, lat_offset+lat_vol, Z, cmap='Greens', norm=norm)
-    ax.set_xlabel('Balloon start time (years since main shock)', fontsize=fontsize)
+    ax.set_xlabel('Balloon start time\n(years since main shock)', fontsize=fontsize)
     ax.set_ylabel('Balloon start latitude (deg)', fontsize=fontsize)
     add_cbar(ax, sc, f'Number of events with SNR > {snr_threshold:.0f}', fontsize=fontsize)
     ax.axhline(lat_vol, color='black', linestyle='--', alpha=0.5)
+    ax.tick_params(axis='both', labelsize=fontsize)
+    ax.text(-0.1, 1., 'c)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax.transAxes)
 
+    fig.align_ylabels()
     fig.subplots_adjust(hspace=0.5, wspace=0.3)
     ax.set_facecolor(cmaplist[0])
+
+    return fig
