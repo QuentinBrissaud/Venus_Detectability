@@ -1,12 +1,12 @@
 import proba_modules as pm
 import numpy as np
-from pyrocko import moment_tensor as mtm
 from importlib import reload
 import matplotlib.pyplot as plt
-from matplotlib import ticker
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import pandas as pd
 from tqdm import tqdm
+import matplotlib.dates as mdates
+from obspy.core.utcdatetime import UTCDateTime
 
 # Example latitude-dependent velocity function
 def vlat_func(latitude):
@@ -175,7 +175,101 @@ def add_cbar(ax, sc, label, fontsize=12.):
     cbar.ax.xaxis.tick_top()
     cbar.ax.set_xlabel(label, labelpad=2, fontsize=fontsize) 
 
-def plot_proba_sequence(amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offset, lat_offset, LAT_offset_shape, mask, noise_level = 0.01, factor = (np.log10(2.)+4.)/4., snr_threshold=1, plot_SNR_distrib=True, fontsize=12.):
+def plot_seq(ax_first, loc_catalog, cmap, color, type_ev=None, fontsize_text=12., xpad=0., max_val=7., maxval_annot=None, str_annot='', vmax=7.):
+
+    ax_first.scatter(loc_catalog.UTC, loc_catalog.mag, c=loc_catalog.mag, cmap=cmap, vmin=1., vmax=vmax, s=3)
+    ax_first.plot([loc_catalog.UTC.min(), loc_catalog.UTC.max()], [max_val, max_val], lw=4., color=color, clip_on=False, zorder=100)
+    mid_point = UTCDateTime(loc_catalog.UTC.min()) + (UTCDateTime(loc_catalog.UTC.max()) - UTCDateTime(loc_catalog.UTC.min()))/2.
+    if type_ev is None:
+        type_ev = loc_catalog.iloc[0].type_ev
+    ax_first.text(mid_point.datetime+pd.Timedelta(days=xpad), max_val+0.2, type_ev, ha='center', va='bottom', fontsize=fontsize_text, clip_on=False, color=color)
+
+    if maxval_annot is not None:
+        ax_first.annotate(
+            str_annot,  # No text for annotation, just the arrow
+            xy=(mid_point, maxval_annot),  # Point where the arrowhead will be
+            xytext=(mid_point, maxval_annot+0.6),  # Starting point of the arrow (slightly above xy)
+            arrowprops=dict(arrowstyle='->', lw=2, color=color),
+            ha='center',
+            color=color
+        )
+
+def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., fontsize=12., fontsize_label=20.):
+
+    time_collapse = UTCDateTime('2018-05-01')
+    time_collapse_end = UTCDateTime('2018-08-05')
+    time_collapse_seq_start = UTCDateTime('2018-05-11')
+    time_collapse_seq_end = UTCDateTime('2018-08-05')
+    time_cratercollapse_seq_start = UTCDateTime('2018-05-1')
+    time_cratercollapse_seq_end = UTCDateTime('2018-05-04')
+    time_magma_start = UTCDateTime('2020-12-20')
+    time_maunaloa_seq_start = UTCDateTime('2022-11-27')
+    time_maunaloa_seq_end = UTCDateTime('2022-12-13')
+    mag_min_collapses = 4.8
+
+    catalog_hawai['type_ev'] = 'regular'
+    catalog_hawai.loc[catalog_hawai.UTC<=time_collapse.datetime, 'type_ev'] = 'Low-level eruptive activity'
+    catalog_hawai.loc[(catalog_hawai.UTC>=time_collapse.datetime)&(catalog_hawai.UTC<time_collapse_end.datetime), 'type_ev'] = 'Other during collapse'
+    catalog_hawai.loc[(catalog_hawai.UTC>=time_collapse_seq_start.datetime)&(catalog_hawai.UTC<time_collapse_seq_end.datetime)&(catalog_hawai.mag>mag_min_collapses),'type_ev'] = 'Kilauea Collapse'
+    catalog_hawai.loc[catalog_hawai.mag==catalog_hawai.mag.max(),'type_ev'] = 'Slumping'
+    catalog_hawai.loc[(catalog_hawai.UTC>=time_cratercollapse_seq_start.datetime)&(catalog_hawai.UTC<time_cratercollapse_seq_end.datetime),'type_ev'] = 'PuuOo crater collapse'
+    catalog_hawai.loc[catalog_hawai.UTC>=time_collapse_end.datetime, 'type_ev'] = 'Aftershocks collapse'
+    catalog_hawai.loc[(catalog_hawai.UTC>=time_magma_start.datetime),'type_ev'] = 'Magma influx and small eruptions'
+    catalog_hawai.loc[(catalog_hawai.UTC>=time_maunaloa_seq_start.datetime)&(catalog_hawai.UTC<=time_maunaloa_seq_end.datetime),'type_ev'] = 'Manu Loa eruption'
+    catalog_hawai['unique_id'] = pd.factorize(catalog_hawai['type_ev'])[0]
+
+    #fig = plt.figure(figsize=(10,5))
+    #grid = fig.add_gridspec(3, 6)
+
+    #ax_first = fig.add_subplot(grid[:2,:3])
+    catalog_hawai_before = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Low-level eruptive activity'])]
+    plot_seq(ax_first, catalog_hawai_before, 'Reds', 'tab:red', type_ev='Low-level\neruptive activity', vmax=catalog_hawai.mag.max())
+
+    catalog_hawai_collapse = catalog_hawai.loc[~catalog_hawai.type_ev.isin(['Low-level eruptive activity', 'Aftershocks collapse', 'Magma influx and small eruptions', 'Manu Loa eruption'])]
+    plot_seq(ax_first, catalog_hawai_collapse, 'Greens', 'tab:green', type_ev='', maxval_annot=5.5, str_annot='Kilauea\nCollapses', vmax=catalog_hawai.mag.max())
+
+    catalog_hawai_later = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Aftershocks collapse',])]
+    plot_seq(ax_first, catalog_hawai_later, 'Blues', 'tab:blue', type_ev='After\nshocks', xpad=-800., vmax=catalog_hawai.mag.max())
+
+    catalog_hawai_magma = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Magma influx and small eruptions',])]
+    plot_seq(ax_first, catalog_hawai_magma, 'Oranges', 'tab:orange', type_ev='Magma\ninflux', xpad=200., vmax=catalog_hawai.mag.max())
+
+    catalog_hawai_manuloa = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Manu Loa eruption',])]
+    plot_seq(ax_first, catalog_hawai_manuloa, 'Purples', 'tab:purple', type_ev='', maxval_annot=5., str_annot='Manu Loa\neruption', vmax=catalog_hawai.mag.max())
+
+    ax_first.set_ylabel('Magnitude (Mw)', fontsize=fontsize)
+    ax_first.text(-0.1, 1., 'a)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax_first.transAxes)
+    ax_first.set_xlim([catalog_hawai.UTC.min(), catalog_hawai.UTC.max()])
+    ax_first.set_ylim([catalog_hawai.mag.min(), max_val])
+
+    #ax_zoom = fig.add_subplot(grid[:2,3:], sharey=ax_first)
+
+    catalog_loc = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Kilauea Collapse'])]
+    sc = ax_zoom.scatter(catalog_loc.UTC, catalog_loc.mag, c='limegreen', alpha=0.3, s=100, label=catalog_loc.iloc[0].type_ev)
+    sc.set_edgecolor("none")
+
+    catalog_loc = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Slumping'])]
+    sc = ax_zoom.scatter(catalog_loc.UTC, catalog_loc.mag, c='tab:blue', alpha=0.3, s=100, label=catalog_loc.iloc[0].type_ev)
+    sc.set_edgecolor("none")
+
+    catalog_loc = catalog_hawai.loc[catalog_hawai.type_ev.isin(['PuuOo crater collapse'])]
+    sc = ax_zoom.scatter(catalog_loc.UTC, catalog_loc.mag, c='tab:red', alpha=0.3, s=100, label=catalog_loc.iloc[0].type_ev)
+    sc.set_edgecolor("none")
+
+    ax_zoom.scatter(catalog_hawai_collapse.UTC, catalog_hawai_collapse.mag, c=catalog_hawai_collapse.unique_id, cmap='Greens', s=3)
+
+    catalog_loc = catalog_hawai.loc[catalog_hawai.type_ev.isin(['PuuOo crater collapse'])]
+    ax_zoom.scatter(catalog_loc.UTC, catalog_loc.mag, c='tab:green', alpha=0.3, cmap='Greens', s=3)
+
+    ax_zoom.legend(frameon=False)
+    ax_zoom.tick_params(axis='both', labelleft=False)
+    date_format = mdates.DateFormatter('%m-%d')  # Format: YYYY-MM-DD
+    ax_zoom.xaxis.set_major_formatter(date_format)
+    ax_zoom.set_title(f'Collapse events in 2018')
+    ax_zoom.set_xlim([catalog_hawai_collapse.UTC.min(), catalog_hawai_collapse.UTC.max()])
+    ax_zoom.text(-0., 1., 'b)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax_zoom.transAxes)
+
+def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offset, lat_offset, LAT_offset_shape, mask, noise_level = 0.01, factor = (np.log10(2.)+4.)/4., snr_threshold=1, plot_SNR_distrib=True, fontsize=12.):
 
     dists = np.logspace(0, 4.*factor, 100)
     fontsize_label = 20.
@@ -190,18 +284,27 @@ def plot_proba_sequence(amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offse
     #mags_ev_reshaped = np.take_along_axis(mags_ev*(mask), idamp, axis=0)[0].reshape(LAT_offset_shape) # lon x lat x t0
     ID_TIMES_EV, DISTS = np.meshgrid(np.arange(all_times.size), dists)
 
+    fig = plt.figure(figsize=(10,5))
+    grid = fig.add_gridspec(3, 6)
+
+    ax_first = fig.add_subplot(grid[:2,:3])
+    ax_zoom = fig.add_subplot(grid[:2,3:], sharey=ax_first)
+
+    plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., fontsize=12., fontsize_label=20.)
+
+    """
     fig = plt.figure(figsize=(8,5))
     grid = fig.add_gridspec(2, 2)
-
     ax_first = fig.add_subplot(grid[0,0])
     ax_first.scatter(all_times, all_mags, c=all_mags, cmap='Reds', vmin=1., vmax=all_mags.max())
     ax_first.set_xlabel('Time (years since main shock)', fontsize=fontsize)
     ax_first.set_ylabel('Magnitude (Mw)', fontsize=fontsize)
     ax_first.tick_params(axis='both', labelsize=fontsize)
     ax_first.text(-0.1, 1., 'a)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax_first.transAxes)
+    """
 
     if plot_SNR_distrib:
-        ax = fig.add_subplot(grid[0,1],)
+        ax = fig.add_subplot(grid[-1,4:],)
         field = amps_ev_reshaped.ravel()/noise_level
         bins = np.logspace(np.log10(0.1),np.log10(10.), 50)
         #bins = np.linspace(0.1,10., 50)
@@ -227,7 +330,7 @@ def plot_proba_sequence(amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offse
         ax.tick_params(axis='both', labelsize=fontsize)
 
     else:
-        ax = fig.add_subplot(grid[0,1], sharex=ax_first)
+        ax = fig.add_subplot(grid[-1,4:], sharex=ax_first)
         ZTL = TL_new(DISTS.T, all_mags[ID_TIMES_EV].T)/noise_level
         #sc = ax.contourf(all_times[ID_TIMES_EV], DISTS, TL_new(DISTS, all_mags[ID_TIMES_EV])/noise_level, levels=[0.1, 0.5, 1, 5, 10], locator=ticker.LogLocator(), cmap='Blues', )
         sc = ax.pcolormesh(all_times, dists, ZTL.T, norm=colors.LogNorm(vmin=0.1, vmax=10), cmap=cmap)
@@ -238,7 +341,7 @@ def plot_proba_sequence(amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offse
         ax.set_facecolor(cmaplist[0])
     ax.text(-0.13, 1., 'b)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax.transAxes)
 
-    ax = fig.add_subplot(grid[1,1], sharex=ax_first)
+    ax = fig.add_subplot(grid[-1,2:4], sharex=ax_first)
     Z = amps_ev_reshaped.max(axis=0)/noise_level
     sc = ax.pcolormesh(t0s_offset, lat_offset+lat_vol, Z, norm=colors.LogNorm(vmin=0.1, vmax=10), cmap=cmap)
     #sc = plt.pcolormesh(t0s_offset, lat_offset, amps_ev_reshaped.max(axis=0))
@@ -262,7 +365,7 @@ def plot_proba_sequence(amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offse
     bounds = np.arange(7)
     norm = colors.BoundaryNorm(bounds, cmap.N)
 
-    ax = fig.add_subplot(grid[1,0], sharex=ax)
+    ax = fig.add_subplot(grid[-1,0:2], sharex=ax)
     Z = number_over_snr.max(axis=0)
     sc = ax.pcolormesh(t0s_offset, lat_offset+lat_vol, Z, cmap='Greens', norm=norm)
     ax.set_xlabel('Balloon start time\n(years since main shock)', fontsize=fontsize)
