@@ -46,6 +46,7 @@ def prepare_mts(strikes):
     
 def prepare_waveforms(dist, azimuths, ref_location):
     
+    print(dist)
     azimuths_rad = np.radians(azimuths)
     id_dist, id_azimuths = np.arange(dist.size), np.arange(len(azimuths))
     id_dist, id_azimuths = np.meshgrid(id_dist, id_azimuths)
@@ -79,6 +80,7 @@ def build_amps_and_traces(dists, depths, base_folder, store_id, f_targets, stf=N
     delta_az = 25.
     azimuths = np.arange(0., 360., delta_az)
     #azimuths = [0.]
+    print(dists)
     waveform_targets, dists_waveform, az_waveform = prepare_waveforms(dists, azimuths, ref_location)
     
     strikes = [0.]
