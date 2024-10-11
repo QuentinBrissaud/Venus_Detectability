@@ -177,6 +177,19 @@ def build_amps_and_traces(dists, depths, base_folder, store_id, f_targets, stf=N
     
     return all_amps_RW, all_amps_S
 
+def get_all_amps(base_folder, stores_id, dists, depths, f_targets, stf):
+
+    all_amps_RW, all_amps_S = pd.DataFrame(), pd.DataFrame()
+    for istore, (store_id, dist) in enumerate(zip(stores_id, dists)):
+        all_amps_RW_loc, all_amps_S_loc = build_amps_and_traces(dist, depths, base_folder, store_id, f_targets, stf=stf)
+        all_amps_RW_loc['store'] = store_id
+        #all_amps_S_loc['store'] = store_id
+        
+        all_amps_RW = pd.concat([all_amps_RW, all_amps_RW_loc])
+        #all_amps_S = pd.concat([all_amps_S, all_amps_S_loc]
+
+    return all_amps_RW
+
 ##########################
 if __name__ == '__main__':
 
@@ -200,9 +213,9 @@ if __name__ == '__main__':
     #stf = gf.TriangularSTF(effective_duration=period)
     stf = None
 
-    bins = np.logspace(np.log10(1e-2), np.log10(0.5), 4)
+    f_bins = np.logspace(np.log10(1e-2), np.log10(0.5), 4)
     f_targets = []
-    for binleft, binright in zip(bins[:-1], bins[1:]):
+    for binleft, binright in zip(f_bins[:-1], f_bins[1:]):
         f_targets += [[binleft, binright]]
 
     ## Greens functions STORES
@@ -217,13 +230,5 @@ if __name__ == '__main__':
     #stores_id.append('GF_venus_qssp_c50km')
     #stores_id.append('GF_venus_qssp_8000km_c50km')
 
-    all_amps_RW, all_amps_S = pd.DataFrame(), pd.DataFrame()
-    for istore, (store_id, dist) in enumerate(zip(stores_id, dists)):
-        all_amps_RW_loc, all_amps_S_loc = build_amps_and_traces(dist, depths, base_folder, store_id, f_targets, stf=stf)
-        all_amps_RW_loc['store'] = store_id
-        #all_amps_S_loc['store'] = store_id
-        
-        all_amps_RW = pd.concat([all_amps_RW, all_amps_RW_loc])
-        #all_amps_S = pd.concat([all_amps_S, all_amps_S_loc]
-
+    all_amps_RW = get_all_amps(base_folder, stores_id, dists, depths, f_targets, stf)
     all_amps_RW.to_csv('./GF_Dirac_1Hz_all_wfreq.csv', header=True, index=False)
