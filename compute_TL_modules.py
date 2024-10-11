@@ -10,7 +10,13 @@ def filter_wave(waveform, f1, f2, dt):
 
     #b, a = signal.butter(N=10, Wn=[f1, f2], btype='bandpass', analog=False, fs=1./dt, output='ba')
     #y_tf = signal.lfilter(b, a, dirac)
-    sos = signal.butter(N=10, Wn=[f1, f2], btype='bandpass', analog=False, fs=1./dt, output='sos')
+    #sos = signal.butter(N=10, Wn=[f1, f2], btype='bandpass', analog=False, fs=1./dt, output='sos')
+    if f1 is None:
+        sos = signal.butter(N=10, Wn=f2, btype='lowpass', analog=False, fs=1./dt, output='sos')
+    elif f2 is None:
+        sos = signal.butter(N=10, Wn=f1, btype='highpass', analog=False, fs=1./dt, output='sos')
+    else:
+        sos = signal.butter(N=10, Wn=[f1, f2], btype='bandpass', analog=False, fs=1./dt, output='sos')
     return signal.sosfilt(sos, waveform)
 
 def show_bounds(store):
@@ -44,9 +50,8 @@ def prepare_mts(strikes):
         
     return types, mts
     
-def prepare_waveforms(dist, azimuths, ref_location):
+def prepare_waveforms(dist, azimuths, ref_location, store_id):
     
-    print(dist)
     azimuths_rad = np.radians(azimuths)
     id_dist, id_azimuths = np.arange(dist.size), np.arange(len(azimuths))
     id_dist, id_azimuths = np.meshgrid(id_dist, id_azimuths)
@@ -80,8 +85,7 @@ def build_amps_and_traces(dists, depths, base_folder, store_id, f_targets, stf=N
     delta_az = 25.
     azimuths = np.arange(0., 360., delta_az)
     #azimuths = [0.]
-    print(dists)
-    waveform_targets, dists_waveform, az_waveform = prepare_waveforms(dists, azimuths, ref_location)
+    waveform_targets, dists_waveform, az_waveform = prepare_waveforms(dists, azimuths, ref_location, store_id)
     
     strikes = [0.]
     types, mts = prepare_mts(strikes)
@@ -112,11 +116,9 @@ def build_amps_and_traces(dists, depths, base_folder, store_id, f_targets, stf=N
             dict_RW = pd.DataFrame(np.c_[-np.ones_like(dists_waveform), -np.ones_like(dists_waveform), dists_waveform, az_waveform], columns=['amp_RW', 'amp_S', 'dist', 'az'])
             dict_RW['type_mt'] = type_mt
             dict_RW['depth'] = depth
-            all_amps_RW = pd.concat([all_amps_RW, dict_RW])
-
-            dict_RW = pd.DataFrame(np.c_[-np.ones_like(dists_waveform), -np.ones_like(dists_waveform), dists_waveform, az_waveform], columns=['amp_RW', 'amp_S', 'dist', 'az'])
-            dict_RW['type_mt'] = type_mt
-            dict_RW['depth'] = depth
+            fmin, fmax = 0., 1.
+            dict_RW['fmin'] = fmin
+            dict_RW['fmax'] = fmax
             all_amps_RW = pd.concat([all_amps_RW, dict_RW])
             
         # convert results in response to Pyrocko traces
@@ -195,42 +197,4 @@ def get_all_amps(base_folder, stores_id, dists, depths, f_targets, stf):
 ##########################
 if __name__ == '__main__':
 
-    ## Discretization
-    delta_dist = 50e3
-    epsilon = 5e3
-    dists = []
-    dists.append(np.arange(0., 50.e3, 5e3)) # in km
-    #dists.append(np.arange(50.e3+epsilon, 8000.e3+epsilon, delta_dist)) # in km
-    #dists.append(np.arange(8000.e3+epsilon, 16000.e3+epsilon, delta_dist)) # in km
-    #dists.append(np.arange(0., 50.e3, 5e3)) # in km
-    #dists.append(np.arange(50.e3+epsilon, 8000.e3+epsilon, delta_dist)) # in km
-    #dists.append(np.arange(8000.e3+epsilon, 16000.e3+epsilon, delta_dist)) # in km
-    delta_depth = 5e3
-    depths = np.arange(5e3, 50e3+delta_depth, delta_depth)
-
-    ## STF
-    #period = 1./1e-1
-    #stf = gf.BoxcarSTF(period, anchor=0.)
-    #stf = gf.BoxcarSTF(period, anchor=0.)
-    #stf = gf.TriangularSTF(effective_duration=period)
-    stf = None
-
-    f_bins = np.logspace(np.log10(1e-2), np.log10(0.5), 4)
-    f_targets = []
-    for binleft, binright in zip(f_bins[:-1], f_bins[1:]):
-        f_targets += [[binleft, binright]]
-
-    ## Greens functions STORES
-    base_folder = '/projects/infrasound/data/infrasound/2023_Venus_inversion/'
-    stores_id = []
-
-    stores_id.append('GF_venus_qssp_nearfield')
-    #stores_id.append('GF_venus_qssp')
-    #stores_id.append('GF_venus_qssp_8000km')
-
-    #stores_id.append('GF_venus_qssp_nearfield_c50km')
-    #stores_id.append('GF_venus_qssp_c50km')
-    #stores_id.append('GF_venus_qssp_8000km_c50km')
-
-    all_amps_RW = get_all_amps(base_folder, stores_id, dists, depths, f_targets, stf)
-    all_amps_RW.to_csv('./GF_Dirac_1Hz_all_wfreq.csv', header=True, index=False)
+    pass
