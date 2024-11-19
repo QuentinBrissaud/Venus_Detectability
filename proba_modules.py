@@ -395,11 +395,13 @@ def get_TL_curves_with_EI(file_curve, dist_min=100., alt_balloon=50., rho0=50, r
 
     return TL_new, TL_new_qmin, TL_new_qmax
 
-def get_TL_curves(file_curve, dist_min = 100., rho0=50., rhob=1., cb=250., use_savgol_filter=False, plot=False, scalar_moment=1):
+def get_TL_curves(file_curve, freq, dist_min = 100., rho0=50., rhob=1., cb=250., use_savgol_filter=False, plot=False, scalar_moment=1, unknown='pressure'):
 
     #median_rw	median_q0.25_rw	median_q0.75_rw	median_body	median_q0.25_body	median_q0.75_body
     pd_all_amps = pd.read_csv(file_curve, header=[0])
-    
+    diff = abs(pd_all_amps.fmax-freq)
+    pd_all_amps = pd_all_amps.loc[diff==diff.min()]
+
     if 'median_rw' in pd_all_amps.columns:
         x = pd_all_amps.dist.values/1e3
         median = pd_all_amps['median_rw'].values
@@ -472,7 +474,11 @@ def get_TL_curves(file_curve, dist_min = 100., rho0=50., rhob=1., cb=250., use_s
     TL_base_seismic_disp = lambda dist, m0: 10**(m0 -1.66*np.log10(kilometers2degrees(dist)) -3.3)*period # eq. 3
     TL_base_seismic = lambda dist, m0: 1e-6*TL_base_seismic_disp(dist, m0)*2*np.pi/period
     """
-    density_ratio = rhob*cb*np.sqrt(rho0/(rhob))
+
+    if unknown == 'pressure':
+        density_ratio = np.sqrt(rho0/(rhob))
+    else:
+        density_ratio = rhob*cb*np.sqrt(rho0/(rhob))
 
     #TL_base = lambda dist, m0: density_ratio*(TL_base_seismic(dist,m0)*1e-6)/(2*np.pi*period) # Raphael
     TL_base = lambda dist, m0: density_ratio*(TL_base_seismic(dist,m0))
@@ -498,7 +504,10 @@ def get_TL_curves(file_curve, dist_min = 100., rho0=50., rhob=1., cb=250., use_s
         plt.yscale('log')
         plt.xscale('log')
         plt.xlabel('Distance (km)', fontsize=12.)
-        plt.ylabel('Amplitude (Pa)', fontsize=12.)
+        if unknown == 'pressure':
+            plt.ylabel('Amplitude (Pa)', fontsize=12.)
+        else:
+            plt.ylabel('Velocity (m/s)', fontsize=12.)
         plt.legend(frameon=False, fontsize=12.)
         folder_curve_img = '/'.join(file_curve.split('/')[:-1])
         plt.savefig(f'{folder_curve_img}/TL_examples.png', transparent=True)

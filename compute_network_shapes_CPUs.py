@@ -161,37 +161,29 @@ def haversine_distance(lon1, lat1, lons, lats, RADIUS_VENUS=6051.8e3):
     
     return distances
 
-def get_airglow_scaling(file, file_curve, R0=6052000, alt_balloon=45., alt_airglow=125., sigma_balloon=1e-2, sigma_airglow=1e-1):
+def get_airglow_scaling(TL_new, period, file_scaling, R0=6052000, sigma_balloon=1e-2, boost_SNR=1., m0=7.,):
 
-    #file_curve = './data/GF_Dirac_1Hz_all.csv'
-    #file_curve = './data/GF_Dirac_1Hz.csv'
-    TL_new, TL_new_qmin, TL_new_qmax = pm.get_TL_curves(file_curve, dist_min=100., rho0=67., rhob=2.792, cb=304., use_savgol_filter=True, plot=True, scalar_moment=10e6)
+    scaling = pd.read_csv(file_scaling, header=[0])
+    if 'period' in scaling.columns:
+        diff = abs(scaling.period-period)
+        scaling = scaling.loc[diff==diff.min()]
+    f_airglow = interpolate.interp1d(scaling.distance, scaling.SNR, kind='nearest', bounds_error=False, fill_value=(scaling.SNR.iloc[0], scaling.SNR.iloc[-1]))
 
-    #file = './data/profile_VCD_for_scaling_pd.csv'
-    profile = pd.read_csv(file, header=[0],)
-
-    diff = abs(profile['altitude']-alt_balloon*1e3)
-    rho_balloon = profile.loc[diff==diff.min(), 'rho'].iloc[0]
-    diff = abs(profile['altitude']-alt_airglow*1e3)
-    rho_airglow = profile.loc[diff==diff.min(), 'rho'].iloc[0]
-    gamma_airglow = profile.loc[diff==diff.min(), 'gamma'].iloc[0]
-    t_airglow = profile.loc[diff==diff.min(), 't'].iloc[0]
-    p_airglow = profile.loc[diff==diff.min(), 'p'].iloc[0]
-    alpha = np.sqrt(rho_airglow/rho_balloon)
-    beta = ((gamma_airglow-1.)/gamma_airglow)*t_airglow/p_airglow
-
-    distances = np.arange(10000, np.pi*R0/1.001, 5e5)[:]/1e3
-    distances_r0 = np.arange(10000, np.pi*R0/1.001, 2.5e5)[:]/1e3
+    distances = np.linspace(0., np.pi*R0/1.001, 300)/1e3
+    distances_r0 = np.linspace(-np.pi*R0/1.001, np.pi*R0/1.001, 300)/1e3
     DIST, DIST_R0 = np.meshgrid(distances, distances_r0)
 
-    m0 = 7.
-    diff=abs(TL_new(DIST+DIST_R0, m0)/sigma_balloon-(beta*alpha)*TL_new(DIST, m0)/sigma_airglow)
-    coefs = distances_r0[diff.argmin(axis=0)]
-    f_r0 = interpolate.interp1d(distances, coefs, bounds_error=False, fill_value=(coefs[0], coefs[-1]))
+    diff = abs(TL_new(DIST+DIST_R0, m0)/sigma_balloon-boost_SNR*f_airglow(DIST))
+    flipped_diff = np.flip(diff, axis=0)
+    flipped_indices = flipped_diff.argmin(axis=0) ## In order to get argmin to return the largest index if multiple minima
+    original_indices = diff.shape[0] - 1 - flipped_indices
+    #original_indices = diff.argmin(axis=0)
+    coefs = distances_r0[original_indices]
+    f_alt_scaling = interpolate.interp1d(distances, coefs, bounds_error=False, fill_value=(coefs[0], coefs[-1]))
 
-    return f_r0
+    return f_alt_scaling
 
-def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat, s_cluster=100, use_airglow=False, which_stat_is_airglow=1, R_airglow=5000., alt_scaling=None):
+def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat, s_cluster=100, use_airglow=False, which_stat_is_airglow=1, R_airglow=5000., f_alt_scaling=None):
 
     ind_without_airglow = id_stat
     if use_airglow:
@@ -216,16 +208,15 @@ def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat,
             shape_init_ref = id_ref_quake.shape
             id_ref_quake, all_id_scenarios, all_id_stat = id_ref_quake.ravel(), all_id_scenarios.ravel(), all_id_stat.ravel()
             max_dist_airglow = haversine_distance(LONS[id_ref_quake], LATS[id_ref_quake], lons_stations[all_id_scenarios, all_id_stat].ravel(), lats_stations[all_id_scenarios, all_id_stat].ravel())
-            max_dist_airglow -= R_airglow*1e3
+            max_dist_airglow -= R_airglow*1e3 ## Accounting for large field of view
             max_dist_airglow[max_dist_airglow<0] = 0.
-            max_dist_airglow += alt_scaling(max_dist_airglow/1e3)*1e3
+            max_dist_airglow += f_alt_scaling(max_dist_airglow/1e3)*1e3
+            max_dist_airglow[max_dist_airglow<0] = 0.
             max_dist_airglow = max_dist_airglow.reshape(shape_init_ref).max(axis=-1)
             #print(max_dist_airglow.shape, max_dist[inds_loc,:].shape, shape_init_ref)
             
             max_dist[inds_loc,:] = np.max(np.stack((max_dist[inds_loc,:], max_dist_airglow), axis=-1), axis=-1)
 
-        #break
-        
     
     return max_dist
 
