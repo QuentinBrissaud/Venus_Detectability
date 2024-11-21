@@ -395,10 +395,30 @@ def get_TL_curves_with_EI(file_curve, dist_min=100., alt_balloon=50., rho0=50, r
 
     return TL_new, TL_new_qmin, TL_new_qmax
 
-def get_TL_curves(file_curve, freq, dist_min = 100., rho0=50., rhob=1., cb=250., use_savgol_filter=False, plot=False, scalar_moment=1, unknown='pressure'):
+def plot_TL(file_curve, TL_new, TL_new_qmin, TL_new_qmax, unknown, dists=np.linspace(1., 18e3, 100), mags=[5., 6.], noise_level=1e-2):
 
-    #median_rw	median_q0.25_rw	median_q0.75_rw	median_body	median_q0.25_body	median_q0.75_body
-    pd_all_amps = pd.read_csv(file_curve, header=[0])
+    
+    plt.figure()
+    for imag, mag in enumerate(mags):
+        label = dict()
+        if imag == len(mags)-1:
+            label['label'] = 'uncertainty'
+        plt.plot(dists, TL_new(dists, mag)/noise_level, label=mag, linewidth=3.)
+        plt.fill_between(dists, TL_new_qmin(dists, mag)/noise_level, TL_new_qmax(dists, mag)/noise_level, color='grey', alpha=0.3, **label)
+
+    plt.yscale('log')
+    plt.xscale('log')
+    plt.xlabel('Distance (km)', fontsize=12.)
+    if unknown == 'pressure':
+        plt.ylabel('Amplitude (Pa)', fontsize=12.)
+    else:
+        plt.ylabel('Velocity (m/s)', fontsize=12.)
+    plt.legend(frameon=False, fontsize=12.)
+    folder_curve_img = '/'.join(file_curve.split('/')[:-1])
+    plt.savefig(f'{folder_curve_img}/TL_examples.png', transparent=True)
+
+def get_TL_curves_one_freq(pd_all_amps, freq, dist_min, rho0, rhob, cb, use_savgol_filter, scalar_moment, unknown):
+
     diff = abs(pd_all_amps.fmax-freq)
     pd_all_amps = pd_all_amps.loc[diff==diff.min()]
 
@@ -489,30 +509,37 @@ def get_TL_curves(file_curve, freq, dist_min = 100., rho0=50., rhob=1., cb=250.,
     TL_new_qmin = lambda dist, m0: TL_base_qmin(dist, m0)*(dist>=dist_min) + TL_base_qmin(dist_min, m0)*(dist<dist_min)
     TL_new_qmax = lambda dist, m0: TL_base_qmax(dist, m0)*(dist>=dist_min) + TL_base_qmax(dist_min, m0)*(dist<dist_min)
 
-    if plot:
-        dists = np.linspace(1., 18e3, 100)
-        mags = [5., 6.]
-        noise_level = 5e-2
-        plt.figure()
-        for imag, mag in enumerate(mags):
-            label = dict()
-            if imag == len(mags)-1:
-                label['label'] = 'uncertainty'
-            plt.plot(dists, TL_new(dists, mag)/noise_level, label=mag, linewidth=3.)
-            plt.fill_between(dists, TL_new_qmin(dists, mag)/noise_level, TL_new_qmax(dists, mag)/noise_level, color='grey', alpha=0.3, **label)
-
-        plt.yscale('log')
-        plt.xscale('log')
-        plt.xlabel('Distance (km)', fontsize=12.)
-        if unknown == 'pressure':
-            plt.ylabel('Amplitude (Pa)', fontsize=12.)
-        else:
-            plt.ylabel('Velocity (m/s)', fontsize=12.)
-        plt.legend(frameon=False, fontsize=12.)
-        folder_curve_img = '/'.join(file_curve.split('/')[:-1])
-        plt.savefig(f'{folder_curve_img}/TL_examples.png', transparent=True)
-
     return TL_new, TL_new_qmin, TL_new_qmax
+
+def get_TL_curves(file_curve, freq, dist_min = 100., rho0=50., rhob=1., cb=250., use_savgol_filter=False, plot=False, scalar_moment=1, unknown='pressure', return_dataframe=False):
+
+    only_one_TL = False
+    if isinstance(freq, float):
+        freq = [freq]
+        only_one_TL = True
+    elif not isinstance(freq, list):
+        print("The variable is neither a float nor a list.")
+        return None, None, None
+
+    pd_all_amps = pd.read_csv(file_curve, header=[0])
+    
+    TL_new, TL_new_qmin, TL_new_qmax = dict(), dict(), dict()
+    for one_freq in freq:
+        TL_new_loc, TL_new_qmin_loc, TL_new_qmax_loc = get_TL_curves_one_freq(pd_all_amps, one_freq, dist_min, rho0, rhob, cb, use_savgol_filter, scalar_moment, unknown)
+        TL_new[one_freq] = TL_new_loc
+        TL_new_qmin[one_freq] = TL_new_qmin_loc
+        TL_new_qmax[one_freq] = TL_new_qmax_loc
+
+        if plot:
+            plot_TL(file_curve, TL_new_loc, TL_new_qmin_loc, TL_new_qmax_loc, unknown)
+
+    if only_one_TL:
+        TL_new, TL_new_qmin, TL_new_qmax = TL_new_loc, TL_new_qmin_loc, TL_new_qmax_loc
+
+    if return_dataframe:
+        return TL_new, TL_new_qmin, TL_new_qmax, pd_all_amps
+    else:
+        return TL_new, TL_new_qmin, TL_new_qmax
 
 def get_surface_ratios(file_ratio):
     surface_ratios = pd.read_csv(file_ratio)

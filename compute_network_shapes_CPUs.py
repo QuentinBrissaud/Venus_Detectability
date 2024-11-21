@@ -161,9 +161,80 @@ def haversine_distance(lon1, lat1, lons, lats, RADIUS_VENUS=6051.8e3):
     
     return distances
 
-def get_airglow_scaling(TL_new, period, file_scaling, R0=6052000, sigma_balloon=1e-2, boost_SNR=1., m0=7.,):
+def compute_alphas(f_rho, f_VER, periods, alts, times, tau=0.5*1e4, surface_amplitude=1., c=200, z0=90.):
 
-    scaling = pd.read_csv(file_scaling, header=[0])
+    ALTS, TIMES = np.meshgrid(alts, times)
+
+    #tau = 0.5*1e4 # s, after eq. 23 in Lognonne, 2016
+    #surface_amplitude = 1. # m/s, at airglow altitude
+    #c = 200 # km/s
+    #z0 = 90.
+    amplification = np.sqrt(f_rho(z0)/f_rho(alts))
+    Az = surface_amplitude*amplification
+    #dzAz = np.r_[0., np.diff(Az) / dz]
+    dzAz = np.gradient(Az, alts)
+    dzAz = interpolate.interp1d(alts, dzAz, kind='quadratic', bounds_error=False, fill_value=0.)
+
+    alphas = []
+    #plt.figure()
+    for period in tqdm(periods):
+        std_t = period/2.
+        t0 = 3*std_t
+        f0 = -2*(1/std_t)*((times-t0)/std_t)*np.exp(-((times-t0)/std_t)**2)
+        f0 /= abs(f0).max()
+        f0 = interpolate.interp1d(times, f0, kind='quadratic', bounds_error=False, fill_value=0.)
+        #plt.plot(times, f0(times), label=period)
+        df0dt = np.gradient(f0(times), times)
+        df0dt = interpolate.interp1d(times, df0dt, kind='quadratic', bounds_error=False, fill_value=0.)
+        dVER = -(tau/(1+1*(2*np.pi/period)*tau)) * f_VER(ALTS) * (-(1/c)*df0dt(TIMES-(ALTS-alts.min())*1e3/c)*Az + dzAz(ALTS)*f0(TIMES-(ALTS-alts.min())*1e3/c))
+        sig = np.trapz((dVER), x=alts, axis=1)
+        max_val_SNR = abs(sig).max()
+        alphas.append(max_val_SNR)
+    #plt.legend()
+    return alphas
+
+def compute_airglow_SNR(TL_new_v, distances, beta, periods, alphas, photons_airglow, f_VER=None, alts=np.linspace(90., 120., 1000), m0=7., file_airglow=''):
+
+    if isinstance(TL_new_v, dict):
+        TL_new_v_freqs = []
+        l_freqs = np.array([freq for freq in TL_new_v.keys()])
+        for period in periods:
+            i_TL = np.argmin(abs(1./l_freqs-period))
+            TL_new_v_freqs.append( TL_new_v[l_freqs[i_TL]] )
+    else:
+        TL_new_v_freqs = [TL_new_v for _ in periods]
+
+    sigma_airglow = 1./(np.sqrt(photons_airglow))
+    if f_VER is not None:
+        sigma_airglow *= np.trapz(f_VER(alts), x=alts)
+
+    airglow_scaling_all = pd.DataFrame()
+    for period, alpha, TL_new_v_loc in zip(periods, alphas, TL_new_v_freqs):
+        scaling = (beta*alpha)*TL_new_v_loc(distances, m0)/sigma_airglow
+        airglow_scaling = pd.DataFrame(np.c_[distances, scaling], columns=['distance', 'SNR'])
+        airglow_scaling['period'] = period
+        airglow_scaling_all = pd.concat([airglow_scaling_all, airglow_scaling])
+    airglow_scaling_all.reset_index(drop=True, inplace=True)
+
+    if file_airglow:
+        airglow_scaling_all.to_csv(file_airglow, header=True, index=False)
+
+    return airglow_scaling_all
+
+def get_f_VER(file_airglow):
+
+    #file_airglow = './data/VER_profile_scaled.csv'
+    VER = pd.read_csv(file_airglow)
+    VER.columns=['VER', 'alt']
+    #f_VER = interpolate.interp1d(VER.alt, VER.VER, kind='quadratic', bounds_error=False, fill_value=(VER.VER.iloc[0], VER.VER.iloc[-1]))
+    f_VER = interpolate.interp1d(VER.alt, VER.VER, kind='quadratic', bounds_error=False, fill_value=0.)
+    
+    return f_VER
+
+def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_balloon=1e-2, boost_SNR=1., m0=7.,):
+
+    #scaling = pd.read_csv(file_scaling, header=[0])
+    scaling = scaling_in.copy()
     if 'period' in scaling.columns:
         diff = abs(scaling.period-period)
         scaling = scaling.loc[diff==diff.min()]
@@ -173,7 +244,7 @@ def get_airglow_scaling(TL_new, period, file_scaling, R0=6052000, sigma_balloon=
     distances_r0 = np.linspace(-np.pi*R0/1.001, np.pi*R0/1.001, 300)/1e3
     DIST, DIST_R0 = np.meshgrid(distances, distances_r0)
 
-    diff = abs(TL_new(DIST+DIST_R0, m0)/sigma_balloon-boost_SNR*f_airglow(DIST))
+    diff = abs(TL_new_p(DIST+DIST_R0, m0)/sigma_balloon-boost_SNR*f_airglow(DIST))
     flipped_diff = np.flip(diff, axis=0)
     flipped_indices = flipped_diff.argmin(axis=0) ## In order to get argmin to return the largest index if multiple minima
     original_indices = diff.shape[0] - 1 - flipped_indices
@@ -183,11 +254,101 @@ def get_airglow_scaling(TL_new, period, file_scaling, R0=6052000, sigma_balloon=
 
     return f_alt_scaling
 
-def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat, s_cluster=100, use_airglow=False, which_stat_is_airglow=1, R_airglow=5000., f_alt_scaling=None):
+def get_airglow_scaling(file_curve, freq, file_atmos='./data/profile_VCD_for_scaling_pd.csv', file_nightglow='./data/VER_profile_scaled.csv', file_dayglow='./data/VER_profile_dayglow.csv', R0=6052000, sigma_balloon=1e-2, boost_SNR=1., photons_dayglow=3.5e5, alpha_dayglow=1e-5, photons_nightglow=2e4, beta=1., TL_new_v=None, TL_new_p=None):
+
+    ## Standard Inputs
+    R0 = 6052000
+    m0 = 7.
+    distances = np.linspace(0., np.pi*R0/1.001, 300)/1e3
+    #file_nightglow = './data/VER_profile_scaled.csv'
+    f_VER_nightglow = get_f_VER(file_nightglow)
+    #file_dayglow = './data/VER_profile_dayglow.csv'
+    f_VER_dayglow = get_f_VER(file_dayglow)
+    alts_dayglow = np.linspace(90., 150., 1000)
+    alts_nightglow = np.linspace(90., 120., 1000)
+    times = np.linspace(0., 2000., 2000)
+
+    ## Load Venus data
+    profile = pd.read_csv(file_atmos)
+    f_rho = interpolate.interp1d(profile.altitude/1e3, profile.rho, kind='quadratic')
+    f_c = interpolate.interp1d(profile.altitude/1e3, profile.c, kind='quadratic')
+
+    ## Load frequency dependent TL curves
+    #file_curve = './data/GF_data/GF_Dirac_1Hz_all_wfreq.csv'
+    #freq = [0.01, 0.1, 1.]
+    dict_TL = dict(dist_min=100., rho0=f_rho(0.), rhob=f_rho(90.), cb=f_c(90.), use_savgol_filter=True, plot=False, scalar_moment=10e6, return_dataframe=False)
+    if TL_new_v is None:
+        TL_new_v, _, _ = pm.get_TL_curves(file_curve, freq, unknown='velocity', **dict_TL)
+    if TL_new_p is None:
+        TL_new_p, _, _ = pm.get_TL_curves(file_curve, freq, unknown='pressure', **dict_TL)
+
+    ## Compute nightglow scaling which is period dependent unlike dayglow
+    ## Dayglow scaling is period independent because dominated by advection
+    periods = np.array([1./freq for freq in TL_new_v.keys()])
+    alphas_nightglow = compute_alphas(f_rho, f_VER_nightglow, periods, alts_nightglow, times,)
+    alphas_dayglow = [alpha_dayglow for _ in periods]
+
+    ## Compute SNR from velocity TLs
+    dayglow_scaling = compute_airglow_SNR(TL_new_v, distances, beta, periods, alphas_dayglow, photons_dayglow, f_VER=f_VER_dayglow, alts=alts_dayglow, file_airglow='', m0=m0)
+    nightglow_scaling = compute_airglow_SNR(TL_new_v, distances, beta, periods, alphas_nightglow, photons_nightglow, f_VER=f_VER_nightglow, alts=alts_nightglow, file_airglow='', m0=m0)
+
+    ## Compute frequency dependent scaling function
+    #opt_scaling = dict(R0=R0, sigma_balloon=sigma_balloon, boost_SNR=boost_SNR, m0=7.,)
+    #f_alt_scaling = get_airglow_scaling_from_TL(TL_new_p, period, file_scaling, **opt_scaling)
+    opt_scaling = dict(R0=R0, sigma_balloon=sigma_balloon, boost_SNR=boost_SNR, m0=m0,)
+    f_alt_scaling_dayglow, f_alt_scaling_nightglow = dict(), dict()
+    for period, scaling in dayglow_scaling.groupby('period'):
+        TL = TL_new_p[1./period]
+        f_alt_scaling_dayglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, **opt_scaling)
+
+    for period, scaling in nightglow_scaling.groupby('period'):
+        TL = TL_new_p[1./period]
+        f_alt_scaling_nightglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, **opt_scaling)
+
+    return f_alt_scaling_dayglow, f_alt_scaling_nightglow, TL_new_v, TL_new_p
+
+def compute_intersections(C1, L1, C2, L2):
+    """
+    Compute the intersection center and half-length for multiple cases.
+
+    Parameters:
+    C1, L1 : ndarray
+        Centers and half-lengths of the first set of lines.
+    C2, L2 : ndarray
+        Centers and half-lengths of the second set of lines.
+
+    Returns:
+    intersection_centers : ndarray
+        Centers of the intersections.
+    intersection_half_lengths : ndarray
+        Half-lengths of the intersections.
+    """
+    # Calculate endpoints for both sets of lines
+    start1, end1 = C1 - L1, C1 + L1
+    start2, end2 = C2 - L2, C2 + L2
+
+    # Intersection endpoints
+    left = np.maximum(start1, start2)
+    right = np.minimum(end1, end2)
+
+    # Check for intersections and compute results
+    valid = left <= right  # Boolean mask for valid intersections
+    intersection_centers = np.where(valid, (left + right) / 2, 0.)
+    intersection_half_lengths = np.where(valid, (right - left) / 2, -1.)
+
+    return intersection_centers, intersection_half_lengths
+
+def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat, s_cluster=100, use_airglow=False, which_stat_is_airglow=1, f_alt_scaling=None, lon_0_airglow=dict(nightglow=180., dayglow=0.), radius_airglow=dict(nightglow=60., dayglow=70.), radius_view=60., airglow_considered=['dayglow', 'nightglow']):
+
+    if use_airglow and f_alt_scaling is None:
+        print('ERROR: Cannot have airglow and not altitude scaling functional')
+        return
 
     ind_without_airglow = id_stat
+    only_airglow = False
     if use_airglow:
         ind_without_airglow = np.setdiff1d(id_stat, np.array([which_stat_is_airglow]))
+        only_airglow = False if ind_without_airglow.size > 0 else True
         ind_with_airglow = np.array([which_stat_is_airglow])
 
     max_dist = np.zeros((lats_stations.shape[0], LONS.size))
@@ -195,41 +356,35 @@ def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat,
     for _, i_cluster in tqdm(enumerate(clusters), total=clusters.size):
         
         inds_loc = np.arange(i_cluster, min(i_cluster+s_cluster,lats_stations.shape[0]))
-        id_ref_quake, all_id_scenarios, all_id_stat = np.meshgrid(np.arange(LONS.size), id_scenario[inds_loc], ind_without_airglow)
-        shape_init_ref = id_ref_quake.shape
-        #print(shape_init_ref)
-        id_ref_quake, all_id_scenarios, all_id_stat = id_ref_quake.ravel(), all_id_scenarios.ravel(), all_id_stat.ravel()
+        if not only_airglow:
+            id_ref_quake, all_id_scenarios, all_id_stat = np.meshgrid(np.arange(LONS.size), id_scenario[inds_loc], ind_without_airglow)
+            shape_init_ref = id_ref_quake.shape
+            id_ref_quake, all_id_scenarios, all_id_stat = id_ref_quake.ravel(), all_id_scenarios.ravel(), all_id_stat.ravel()
 
-        max_dist_loc = haversine_distance(LONS[id_ref_quake], LATS[id_ref_quake], lons_stations[all_id_scenarios, all_id_stat].ravel(), lats_stations[all_id_scenarios, all_id_stat].ravel())
-        max_dist[inds_loc,:] = max_dist_loc.reshape(shape_init_ref).max(axis=-1)
+            max_dist_loc = haversine_distance(LONS[id_ref_quake], LATS[id_ref_quake], lons_stations[all_id_scenarios, all_id_stat].ravel(), lats_stations[all_id_scenarios, all_id_stat].ravel())
+            max_dist[inds_loc,:] = max_dist_loc.reshape(shape_init_ref).max(axis=-1)
 
         if use_airglow:
             id_ref_quake, all_id_scenarios, all_id_stat = np.meshgrid(np.arange(LONS.size), id_scenario[inds_loc], ind_with_airglow)
             shape_init_ref = id_ref_quake.shape
             id_ref_quake, all_id_scenarios, all_id_stat = id_ref_quake.ravel(), all_id_scenarios.ravel(), all_id_stat.ravel()
-            max_dist_airglow = haversine_distance(LONS[id_ref_quake], LATS[id_ref_quake], lons_stations[all_id_scenarios, all_id_stat].ravel(), lats_stations[all_id_scenarios, all_id_stat].ravel())
-            max_dist_airglow -= R_airglow*1e3 ## Accounting for large field of view
-            max_dist_airglow[max_dist_airglow<0] = 0.
-            max_dist_airglow += f_alt_scaling(max_dist_airglow/1e3)*1e3
-            max_dist_airglow[max_dist_airglow<0] = 0.
-            max_dist_airglow = max_dist_airglow.reshape(shape_init_ref).max(axis=-1)
-            #print(max_dist_airglow.shape, max_dist[inds_loc,:].shape, shape_init_ref)
             
-            max_dist[inds_loc,:] = np.max(np.stack((max_dist[inds_loc,:], max_dist_airglow), axis=-1), axis=-1)
+            ## Computing maximum scaled distances for both types of airglow
+            max_dist_airglow_all = np.zeros_like(LONS[id_ref_quake])+1e10
+            for type_airglow in airglow_considered:
+                new_lon, new_radius = compute_intersections(all_id_scenarios*0+lon_0_airglow[type_airglow], radius_airglow[type_airglow], lons_stations[all_id_scenarios, all_id_stat].ravel(), radius_view)
+                max_dist_airglow = haversine_distance(LONS[id_ref_quake], LATS[id_ref_quake], new_lon, LONS[id_ref_quake]*0.,) 
+                max_dist_airglow -= new_radius*1e2*1e3
+                max_dist_airglow[max_dist_airglow<0] = 0.
+                max_dist_airglow[new_radius<0] = 1e10
+                max_dist_airglow += f_alt_scaling[type_airglow](max_dist_airglow/1e3)*1e3
+                max_dist_airglow[max_dist_airglow<0] = 0.
+                max_dist_airglow[max_dist_airglow/1e3>19000.] = 19000.*1e3
+                max_dist_airglow_all = np.min(np.stack((max_dist_airglow_all, max_dist_airglow), axis=-1), axis=-1)
+                
+            max_dist_airglow_all = max_dist_airglow_all.reshape(shape_init_ref).max(axis=-1)
+            max_dist[inds_loc,:] = np.max(np.stack((max_dist[inds_loc,:], max_dist_airglow_all), axis=-1), axis=-1)
 
-    
-    return max_dist
-
-def get_max_dist_airglow(lats_stations, lons_stations, LATS, LONS, which_stat_is_airglow=1, R_airglow=5000.*1e3,):
-
-    max_dist = np.zeros((lats_stations.shape[0], LONS.size))
-    for istation, (lat, lon) in tqdm(enumerate(zip(lats_stations, lons_stations)), total=lons_stations.shape[0]):
-
-        lats_loc, lons_loc = np.repeat(lat, LATS.size), np.repeat(lon, LONS.size)
-
-        max_dist[istation,:] = haversine_distance(LONS, LATS, lons_loc, lats_loc)
-        max_dist[istation,:] -= R_airglow
-        max_dist[istation, max_dist[istation,:]<0] = 0.
     
     return max_dist
 
@@ -259,24 +414,71 @@ def get_grid(lats, lons):
 
     return LATS, LONS, shape_init
 
-def get_stations(lats, lons, offsets=[[2., 4.], [10., 20.]], fixed_stations=dict(scenario_1=[[0., 0.]])):
+def wrap_longitude(lon_start, L):
+    return ((lon_start + L + 180) % 360) - 180
+
+def get_stations(lats, lons, offsets=[[2., 4.], [10., 20.]], use_airglow=False, use_only_airglow=False, fixed_stations=dict(scenario_1=[[0., 0.]]), add_velocity=False, vel_baloon=0.2, vel_imager=2.6):
 
     LATS, LONS = np.meshgrid(lats, lons)
     LATS, LONS = LATS.ravel(), LONS.ravel()
 
+    vel_baloon_lon = vel_baloon*1e-2
+    vel_imager_lon = vel_imager*1e-2
+    rel_imager_lon = vel_imager_lon-vel_baloon_lon
+    
     if not offsets and not fixed_stations:
         lats_stations = np.array([LATS]).T
         lons_stations = np.array([LONS]).T
+
+    if not offsets and use_airglow:
+        if use_only_airglow:
+            lats_stations = np.array([lons*0.]).T
+            lons_stations = np.array([lons]).T
+        else:
+            if add_velocity:
+                X = np.zeros_like(lons)
+                lon_initial = lons[0]
+                dlon = abs(lons[1]-lons[0])
+                dlon_mod = dlon*(1+rel_imager_lon/vel_baloon_lon)
+                X[0] = lon_initial
+                for ilon in range(1,X.size):
+                    X[ilon] = wrap_longitude(X[ilon-1], -dlon_mod)
+
+                LATS_airglow, X = np.meshgrid(lats*0., X)
+                LATS_airglow, X = LATS_airglow.ravel(), X.ravel()
+
+            else:
+                X = lons_stations
+                LATS_airglow = lons_stations*0.
+            lats_stations = np.c_[lats_stations, LATS_airglow]
+            lons_stations = np.c_[lons_stations, X]
     
     for ioffset, offsets_network in enumerate(offsets):
-
         lats_other_stations = np.array([LATS]).T
         lons_other_stations = np.array([LONS]).T
+        #print(f'offsets_network: {offsets_network}')
         for one_offset in offsets_network:
             lon1 = LONS+one_offset
             lon1[lon1>180] = -180 + abs(lon1[lon1>180]-180.)
             lats_other_stations = np.c_[lats_other_stations, LATS]
             lons_other_stations = np.c_[lons_other_stations, lon1]
+
+        if use_airglow:
+            if add_velocity:
+                X = np.zeros_like(lons)
+                lon_initial = lons[0]
+                dlon = abs(lons[1]-lons[0])
+                X[0] = lon_initial
+                dlon_mod = dlon*(1+rel_imager_lon/vel_baloon_lon)
+                for ilon in range(1,X.size):
+                    X[ilon] = wrap_longitude(X[ilon-1], -dlon_mod)
+
+                LATS_airglow, X = np.meshgrid(lats*0, X)
+                LATS_airglow, X = LATS_airglow.ravel(), X.ravel()
+            else:
+                X = lons_stations
+            lats_other_stations = np.c_[lats_other_stations, LATS_airglow]
+            lons_other_stations = np.c_[lons_other_stations, X]
 
         if ioffset == 0:
             lats_stations = lats_other_stations.copy()
@@ -284,9 +486,9 @@ def get_stations(lats, lons, offsets=[[2., 4.], [10., 20.]], fixed_stations=dict
         else:
             lats_stations = np.r_[lats_stations, lats_other_stations]
             lons_stations = np.r_[lons_stations, lons_other_stations]
+        #print(lats_stations.shape)
 
     for iscenario, (scenario_id, scenario) in enumerate(fixed_stations.items()):
-
         lats_other_stations = np.array([LATS]).T
         lons_other_stations = np.array([LONS]).T
         for istation, station in enumerate(scenario):
@@ -300,7 +502,7 @@ def get_stations(lats, lons, offsets=[[2., 4.], [10., 20.]], fixed_stations=dict
         else:
             lats_stations = np.r_[lats_stations, lats_other_stations]
             lons_stations = np.r_[lons_stations, lons_other_stations]
-
+        
     #id_scenario = np.arange(LONS.size)
     id_scenario = np.arange(lons_stations.shape[0])
     id_stat = np.arange(lons_stations.shape[1])
