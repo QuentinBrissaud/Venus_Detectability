@@ -4,7 +4,6 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union
 import pyproj
 from tqdm import tqdm
-import time
 from matplotlib.patches import Polygon as Polygon_mpl
 import geopandas as gpd
 from functools import partial
@@ -254,11 +253,10 @@ def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_
 
     return f_alt_scaling
 
-def get_airglow_scaling(file_curve, freq, file_atmos='./data/profile_VCD_for_scaling_pd.csv', file_nightglow='./data/VER_profile_scaled.csv', file_dayglow='./data/VER_profile_dayglow.csv', R0=6052000, sigma_balloon=1e-2, boost_SNR=1., photons_dayglow=3.5e5, alpha_dayglow=1e-5, photons_nightglow=2e4, beta=1., TL_new_v=None, TL_new_p=None):
+def get_airglow_scaling(file_curve, freq, file_atmos='./data/profile_VCD_for_scaling_pd.csv', file_nightglow='./data/VER_profile_scaled.csv', file_dayglow='./data/VER_profile_dayglow.csv', R0=6052000, sigma_balloon=1e-2, boost_SNR=1., photons_dayglow=3.5e5, alpha_dayglow=1e-5, photons_nightglow=2e4, beta=1., TL_new_v=None, TL_new_p=None, m0 = 7.):
 
     ## Standard Inputs
     R0 = 6052000
-    m0 = 7.
     distances = np.linspace(0., np.pi*R0/1.001, 300)/1e3
     #file_nightglow = './data/VER_profile_scaled.csv'
     f_VER_nightglow = get_f_VER(file_nightglow)
@@ -295,15 +293,15 @@ def get_airglow_scaling(file_curve, freq, file_atmos='./data/profile_VCD_for_sca
     ## Compute frequency dependent scaling function
     #opt_scaling = dict(R0=R0, sigma_balloon=sigma_balloon, boost_SNR=boost_SNR, m0=7.,)
     #f_alt_scaling = get_airglow_scaling_from_TL(TL_new_p, period, file_scaling, **opt_scaling)
-    opt_scaling = dict(R0=R0, sigma_balloon=sigma_balloon, boost_SNR=boost_SNR, m0=m0,)
+    opt_scaling = dict(R0=R0, sigma_balloon=sigma_balloon, m0=m0,)
     f_alt_scaling_dayglow, f_alt_scaling_nightglow = dict(), dict()
     for period, scaling in dayglow_scaling.groupby('period'):
         TL = TL_new_p[1./period]
-        f_alt_scaling_dayglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, **opt_scaling)
+        f_alt_scaling_dayglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, boost_SNR=boost_SNR['dayglow'], **opt_scaling)
 
     for period, scaling in nightglow_scaling.groupby('period'):
         TL = TL_new_p[1./period]
-        f_alt_scaling_nightglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, **opt_scaling)
+        f_alt_scaling_nightglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, boost_SNR=boost_SNR['nightglow'], **opt_scaling)
 
     return f_alt_scaling_dayglow, f_alt_scaling_nightglow, TL_new_v, TL_new_p
 

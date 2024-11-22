@@ -691,7 +691,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
         use_gdf = True
 
     ## polygon2 is a multipolygon
-    i_cpu, l_points, surface1_lon, surface1_lat, n_subshapes = input
+    i_cpu, l_points, surface1_lon, surface1_lat, n_subshapes = input ## TODO: When using geodataframe no need to pass surface1_lon, surface1_lat, n_subshapes
     opt_TL = dict(subsample_db=subsample_db, buffer_line=buffer_line, threshold_neighbor_pts=threshold_neighbor_pts, random_state=random_state)
 
     if i_cpu == 0:
@@ -705,7 +705,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
         for iradius, radius in enumerate(l_radius):
 
             if use_gdf: ## We already computed the shapes
-                diff_lat = abs(gdf.lon_statio-lat_0_current)
+                diff_lat = abs(gdf.lon_statio-lon_0_current)
                 diff_lon = abs(gdf.lat_statio-lat_0_current)
                 diff_dist = abs(gdf['distance']*1e3-radius)
                 if diff_dist.min() > threshold_acceptable: ## In case where there is no distance close to radius, i.e., no stations close enough to the source for a network for example we give a zero radius
@@ -965,6 +965,7 @@ if __name__ == '__main__':
     l_radius = np.arange(10000, np.pi*R0/1.001, 5e5)[:]
     lon_0, lat_0 = 0., -89.
 
+    """
     if compute_TL_coords:
         
         opt_coords = dict(
@@ -985,6 +986,7 @@ if __name__ == '__main__':
         with open('./data/TL_data/coords_lon.npy', 'wb') as f: np.save(f, coords_lon)
         with open('./data/TL_data/coords_lat.npy', 'wb') as f: np.save(f, coords_lat)
         with open('./data/TL_data/n_subshapes.npy', 'wb') as f: np.save(f, np.array(n_subshapes))
+    """
 
     if compute_ratios:
 
@@ -1017,7 +1019,7 @@ if __name__ == '__main__':
                 l_points=l_points, 
                 surface1_lon=surface1_lon, 
                 surface1_lat=surface1_lat,
-                gdf=gpd.read_file(f"./data/airglow_shp/airglow.shp"),
+                gdf=gpd.read_file(f"./data/airglow_shp/network_SNRnight10.0_SNRday1.shp"),
                 nb_CPU=10,
             )
             #opt_surface = dict(lon_0=0.,l_radius=l_radius,proj=proj, polygon_map=polygon_map, polygon_region=unioned_linestring, subsample_db=5, buffer_line=120000,threshold_neighbor_pts=20e6, random_state=0,n_subshapes=n_subshapes, l_points=l_points, surface1_lon=surface1_lon, surface1_lat=surface1_lat,nb_CPU=20)
@@ -1025,7 +1027,7 @@ if __name__ == '__main__':
             if find_active_corona_only:
                 region = f'{region}_active'
 
-            #plt.figure(); plt.plot(ratio_df.radius.iloc[:30], ratio_df.ratio_map.iloc[:30]); plt.savefig('./test.png')
+            #plt.figure(); plt.plot(ratio_df.radius.iloc[:30], ratio_df.ratio_map.iloc[:30]); plt.savefig('./test2.png')
             ratio_df['region'] = region
             ratio_df.to_csv(f'./data/surface_ratios/surface_ratios_airglow_{region}.csv', index=False, header=True)
 
