@@ -670,6 +670,11 @@ def compute_region_intraplate(l_regions, proj):
 
     return polygon2
 
+def compute_map(lat_0=-89., lon_0=0., R0=6052000):
+    proj = pyproj.Proj(proj='robin', lat_0=lat_0, lon_0=lon_0, a=R0, b=R0)
+    polygon_map, _ = compute_whole_map_region(lon_0, proj, dlon=1., dlat=1)
+    return polygon_map
+
 def compute_map_and_TL(folder_TL_data, lat_0=-89., lon_0=0., R0=6052000):
 #def compute_map_and_TL(LONS, LATS, l_points, l_radius, num_points=2000, lat_0=-89., lon_0=0., R0=6052000):
 
@@ -743,9 +748,14 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
     ratio_df.reset_index(drop=True, inplace=True)
     return ratio_df
 
-def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, n_subshapes, l_points, surface1_lon, surface1_lat, gdf=None, nb_CPU=12):
+def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, l_points, n_subshapes=None, surface1_lon=None, surface1_lat=None, gdf=None, nb_CPU=12):
 
-    n_subshapes = n_subshapes.reshape(surface1_lon.shape[1:])
+    if n_subshapes is None and gdf is None:
+        print(f'Either provide shape file or TL subshapes')
+        return
+
+    if n_subshapes is not None:
+        n_subshapes = n_subshapes.reshape(surface1_lon.shape[1:])
     nb_chunks = l_points.shape[0]
     partial_compute_scores = partial(compute_surface_ratios_wrinkles, lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, gdf)
         
@@ -766,7 +776,11 @@ def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_ma
             if i == N-1:
                 idx = np.arange(i*step_idx, nb_chunks)
             idxs.append(idx)
-            list_of_lists.append( (i, l_points[idx,:], surface1_lon[:, idx,:], surface1_lat[:, idx,:], n_subshapes[idx,:]) )
+
+            input_list = (i, l_points[idx,:], None, None, None)
+            if surface1_lon is not None:
+                input_list = (i, l_points[idx,:], surface1_lon[:, idx,:], surface1_lat[:, idx,:], n_subshapes[idx,:])
+            list_of_lists.append( input_list )
 
         with get_context("spawn").Pool(processes = N) as p:
             print(f'Running across {N} CPU')
