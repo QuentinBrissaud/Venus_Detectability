@@ -686,8 +686,13 @@ def compute_map_and_TL(folder_TL_data, lat_0=-89., lon_0=0., R0=6052000):
 def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, gdf, input):
 
     use_gdf = False
+    periods = [0.]
     if gdf is not None:
         threshold_acceptable =  np.diff(l_radius)[0]/2.
+        use_period = False
+        if 'period' in gdf.columns:
+            use_period = True
+            periods = gdf.periods.unique()
         use_gdf = True
 
     ## polygon2 is a multipolygon
@@ -699,35 +704,41 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
 
     ratio_df = pd.DataFrame()
     for iloc, (lon_0_current, lat_0_current) in tqdm(enumerate(l_points), total=l_points.shape[0], disable=not i_cpu==0):
+    
+        for period in periods:
 
-        sensor = Point(proj(lon_0_current, lat_0_current))
+            sensor = Point(proj(lon_0_current, lat_0_current))
 
-        for iradius, radius in enumerate(l_radius):
+            for iradius, radius in enumerate(l_radius):
 
-            if use_gdf: ## We already computed the shapes
-                diff_lat = abs(gdf.lon_statio-lon_0_current)
-                diff_lon = abs(gdf.lat_statio-lat_0_current)
-                diff_dist = abs(gdf['distance']*1e3-radius)
-                if diff_dist.min() > threshold_acceptable: ## In case where there is no distance close to radius, i.e., no stations close enough to the source for a network for example we give a zero radius
-                    loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0.}
-                    ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
-                    continue
+                if use_gdf: ## We already computed the shapes
+                    diff_lat = abs(gdf.lon_statio-lon_0_current)
+                    diff_lon = abs(gdf.lat_statio-lat_0_current)
+                    diff_dist = abs(gdf['distance']*1e3-radius)
+                    if diff_dist.min() > threshold_acceptable: ## In case where there is no distance close to radius, i.e., no stations close enough to the source for a network for example we give a zero radius
+                        loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0.}
+                        ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
+                        continue
+                    else:
+                        poly = gdf.loc[(diff_lat==diff_lat.min())&(diff_lon==diff_lon.min())&(diff_dist==diff_dist.min())]
+                        if use_period:
+                            diff_t = abs(gdf.period-period)
+                            poly = poly.loc[diff_t==diff_t.min()]
+                        poly = poly.geometry.iloc[0]
                 else:
-                    poly = gdf.loc[(diff_lat==diff_lat.min())&(diff_lon==diff_lon.min())&(diff_dist==diff_dist.min()), 'geometry'].iloc[0]
-            else:
-                trajectory = np.c_[surface1_lon[:,iloc,iradius], surface1_lat[:,iloc,iradius]]
-                poly, _ = compute_TL_region_v2(polygon_map, trajectory, proj, lon_0, lon_0_current, sensor, n_subshapes[iloc,iradius], **opt_TL)
+                    trajectory = np.c_[surface1_lon[:,iloc,iradius], surface1_lat[:,iloc,iradius]]
+                    poly, _ = compute_TL_region_v2(polygon_map, trajectory, proj, lon_0, lon_0_current, sensor, n_subshapes[iloc,iradius], **opt_TL)
 
-            if poly is None:
-                print('Error --> ', iradius, iloc)
-                break
+                if poly is None:
+                    print('Error --> ', iradius, iloc)
+                    break
 
-            intersection = polygon_region.intersection(poly)
-            
-            ratio = compute_surface_area_ratio(intersection, polygon_map)
-            ratio_map = compute_surface_area_ratio(intersection, polygon_region)
-            loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': ratio, 'ratio_map': ratio_map}
-            ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
+                intersection = polygon_region.intersection(poly)
+                
+                ratio = compute_surface_area_ratio(intersection, polygon_map)
+                ratio_map = compute_surface_area_ratio(intersection, polygon_region)
+                loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': ratio, 'ratio_map': ratio_map, 'period': period}
+                ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
 
     ratio_df.reset_index(drop=True, inplace=True)
     return ratio_df
@@ -1019,16 +1030,18 @@ if __name__ == '__main__':
                 l_points=l_points, 
                 surface1_lon=surface1_lon, 
                 surface1_lat=surface1_lat,
-                gdf=gpd.read_file(f"./data/airglow_shp/network_SNRnight10.0_SNRday1.shp"),
-                nb_CPU=10,
+                #gdf=gpd.read_file(f"./data/airglow_shp/network_SNRnight10.0_SNRday1.shp"),
+                nb_CPU=3,
             )
             #opt_surface = dict(lon_0=0.,l_radius=l_radius,proj=proj, polygon_map=polygon_map, polygon_region=unioned_linestring, subsample_db=5, buffer_line=120000,threshold_neighbor_pts=20e6, random_state=0,n_subshapes=n_subshapes, l_points=l_points, surface1_lon=surface1_lon, surface1_lat=surface1_lat,nb_CPU=20)
             ratio_df = compute_surface_ratios_wrinkles_across_CPU(**opt_surface)
             if find_active_corona_only:
                 region = f'{region}_active'
 
+            bp()
+
             #plt.figure(); plt.plot(ratio_df.radius.iloc[:30], ratio_df.ratio_map.iloc[:30]); plt.savefig('./test2.png')
-            ratio_df['region'] = region
-            ratio_df.to_csv(f'./data/surface_ratios/surface_ratios_airglow_{region}.csv', index=False, header=True)
+            #ratio_df['region'] = region
+            #ratio_df.to_csv(f'./data/surface_ratios/surface_ratios_airglow_{region}.csv', index=False, header=True)
 
     bp()

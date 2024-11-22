@@ -78,7 +78,31 @@ def compute_distance(dist_top, dist_right, dist_bottom, dist_left, angle):
     # Return the minimum distance
     return distances[iclosest], intersections[iclosest]
 
-def compute_trajectory(winds, start_location, nstep_max=1000, time_max=864000, save_trajectory=False, folder='./data'):
+def wrap_longitude(start_lon, L):
+    
+    return ((start_lon + L + 180) % 360) - 180
+
+def compute_trajectory_airglow(start_lon, dlon, velocity_imager=2.6, time_max=864000, save_trajectory=False, folder='./data'):
+
+    velocity_imager_lon = velocity_imager*1e-2
+    dt = dlon/abs(velocity_imager_lon)
+    times = np.arange(0., time_max, dt)
+
+    L = velocity_imager_lon*times
+    lons = wrap_longitude(start_lon, L)
+
+    trajectory = pd.DataFrame()
+    trajectory['time'] = times
+    trajectory['lat'] = 0.
+    trajectory['lon'] = lons
+    trajectory.reset_index(drop=True, inplace=True)
+
+    #if save_trajectory:
+    #    trajectory.to_csv(f'{folder}trajectory_balloon_lat{start_location[0]:.2f}_lon{start_location[1]:.2f}_{time_max/(3600*24)}days.csv', header=True, index=False)
+    
+    return trajectory
+
+def compute_trajectory(winds, start_location, time_max=864000, save_trajectory=False, folder='./data'):
     
     g = Geod(ellps='WGS84') # Use Clarke 1866 ellipsoid.
 

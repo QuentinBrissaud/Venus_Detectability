@@ -413,6 +413,7 @@ def get_grid(lats, lons):
     return LATS, LONS, shape_init
 
 def wrap_longitude(lon_start, L):
+    
     return ((lon_start + L + 180) % 360) - 180
 
 def get_stations(lats, lons, offsets=[[2., 4.], [10., 20.]], use_airglow=False, use_only_airglow=False, fixed_stations=dict(scenario_1=[[0., 0.]]), add_velocity=False, vel_baloon=0.2, vel_imager=2.6):

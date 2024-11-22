@@ -584,8 +584,6 @@ class proba_model:
         
         surface_ratios_region = self.surface_ratios.loc[self.surface_ratios.region==region]
 
-        #print(surface_ratios_region, region,self.surface_ratios.region)
-
         #l_radius = surface_ratios_region.radius.unique()
         l_iloc = surface_ratios_region['iloc'].unique()
         l_lats = [surface_ratios_region.loc[surface_ratios_region['iloc']==iloc, 'lat'].iloc[0] for iloc in l_iloc]
@@ -600,10 +598,11 @@ class proba_model:
                 ratios_values_interp = (1-np.cos(dist_degree))/2.
             else:
                 isurface = np.argmin(np.sqrt((lats[iloc]-l_lats)**2+(lons[iloc]-l_lons)**2))
-                surface_ratios_region_iloc = surface_ratios_region.loc[surface_ratios_region['iloc']==isurface]
+                surface_ratios_region_iloc = surface_ratios_region.loc[surface_ratios_region['iloc']==l_iloc[isurface]]
                 #print(isurface, region, surface_ratios_region['iloc'].unique())
                 radius_values = surface_ratios_region_iloc.radius.values
                 ratios_values = surface_ratios_region_iloc.ratio.values
+            
                 ratios_values_interp = np.interp(self.dists, radius_values/1e3, ratios_values)
             
             RATIOs[:,:,:,iloc] = np.gradient(ratios_values_interp, self.dproba_dists)[np.newaxis,:,np.newaxis]
@@ -680,7 +679,7 @@ class proba_model:
                 print(f'Computing rate for region: {region}')
             F_MAGS[region] = self.compute_ratemag(region).ravel() 
             region_str = region
-            if region_str == 'coronae':
+            if region_str in 'coronae':
                 region_str = 'corona'
             elif region_str == 'ridges':
                 region_str = 'ridge'
