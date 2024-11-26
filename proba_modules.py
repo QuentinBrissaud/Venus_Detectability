@@ -417,11 +417,13 @@ def plot_TL(file_curve, TL_new, TL_new_qmin, TL_new_qmax, unknown, dists=np.lins
     folder_curve_img = '/'.join(file_curve.split('/')[:-1])
     plt.savefig(f'{folder_curve_img}/TL_examples.png', transparent=True)
 
-def get_TL_curves_one_freq(pd_all_amps, freq, dist_min, rho0, rhob, cb, use_savgol_filter, scalar_moment, unknown):
+def get_TL_curves_one_freq(pd_all_amps_in, freq, dist_min, rho0, rhob, cb, use_savgol_filter, scalar_moment, unknown):
 
-    diff = abs(pd_all_amps.fmax-freq)
-    pd_all_amps = pd_all_amps.loc[diff==diff.min()]
-
+    pd_all_amps = pd_all_amps_in.copy()
+    if 'fmax' in pd_all_amps.columns:
+        diff = abs(pd_all_amps.fmax-freq)
+        pd_all_amps = pd_all_amps.loc[diff==diff.min()]
+        
     if 'median_rw' in pd_all_amps.columns:
         x = pd_all_amps.dist.values/1e3
         median = pd_all_amps['median_rw'].values
@@ -496,9 +498,9 @@ def get_TL_curves_one_freq(pd_all_amps, freq, dist_min, rho0, rhob, cb, use_savg
     """
 
     if unknown == 'pressure':
-        density_ratio = np.sqrt(rho0/(rhob))
-    else:
         density_ratio = rhob*cb*np.sqrt(rho0/(rhob))
+    else:
+        density_ratio = np.sqrt(rho0/(rhob))
 
     #TL_base = lambda dist, m0: density_ratio*(TL_base_seismic(dist,m0)*1e-6)/(2*np.pi*period) # Raphael
     TL_base = lambda dist, m0: density_ratio*(TL_base_seismic(dist,m0))

@@ -701,7 +701,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
         use_gdf = True
 
     ## polygon2 is a multipolygon
-    i_cpu, l_points, surface1_lon, surface1_lat, n_subshapes = input ## TODO: When using geodataframe no need to pass surface1_lon, surface1_lat, n_subshapes
+    i_cpu, l_points, surface1_lon, surface1_lat, n_subshapes = input
     opt_TL = dict(subsample_db=subsample_db, buffer_line=buffer_line, threshold_neighbor_pts=threshold_neighbor_pts, random_state=random_state)
 
     if i_cpu == 0:
@@ -954,7 +954,7 @@ def compute_coordinates_TL_across_CPUs(l_radius, num_points, lon_0, lat_0, R0, t
 
     return  coords_lon, coords_lat, n_subshapes
 
-def merge_and_fix_surface_ratio_region(pattern, regions=['corona', 'rift', 'ridge', 'intraplate']):
+def merge_and_fix_surface_ratio_region(pattern, regions=['corona', 'rift', 'ridge', 'intraplate'], write=False):
 
     ## e.g., pattern = './data/surface_ratios_{region}_active.csv'
 
@@ -970,7 +970,10 @@ def merge_and_fix_surface_ratio_region(pattern, regions=['corona', 'rift', 'ridg
         iloc += 1
         all_data.loc[all_data.index.isin(group.index), 'iloc'] = iloc
 
-    all_data.to_csv(pattern.format('all'), header=True, index=False)
+    if write:
+        all_data.to_csv(pattern.format('all'), header=True, index=False)
+
+    return all_data
 
 ##########################
 if __name__ == '__main__':

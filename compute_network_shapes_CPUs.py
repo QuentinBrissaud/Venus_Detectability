@@ -253,6 +253,45 @@ def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_
 
     return f_alt_scaling
 
+def get_airglow_SNR(file_curve, freq, file_atmos='./data/profile_VCD_for_scaling_pd.csv', file_nightglow='./data/VER_profile_scaled.csv', file_dayglow='./data/VER_profile_dayglow.csv', R0=6052000, photons_dayglow=3.5e5, alpha_dayglow=1e-5, photons_nightglow=2e4, beta=1., TL_new_v=None, TL_new_p=None, m0 = 7.):
+
+    ## Standard Inputs
+    R0 = 6052000
+    distances = np.linspace(0., np.pi*R0/1.001, 300)/1e3
+    #file_nightglow = './data/VER_profile_scaled.csv'
+    f_VER_nightglow = get_f_VER(file_nightglow)
+    #file_dayglow = './data/VER_profile_dayglow.csv'
+    f_VER_dayglow = get_f_VER(file_dayglow)
+    alts_dayglow = np.linspace(90., 150., 1000)
+    alts_nightglow = np.linspace(90., 120., 1000)
+    times = np.linspace(0., 2000., 2000)
+
+    ## Load Venus data
+    profile = pd.read_csv(file_atmos)
+    f_rho = interpolate.interp1d(profile.altitude/1e3, profile.rho, kind='quadratic')
+    f_c = interpolate.interp1d(profile.altitude/1e3, profile.c, kind='quadratic')
+
+    ## Load frequency dependent TL curves
+    #file_curve = './data/GF_data/GF_Dirac_1Hz_all_wfreq.csv'
+    #freq = [0.01, 0.1, 1.]
+    dict_TL = dict(dist_min=100., rho0=f_rho(0.), rhob=f_rho(90.), cb=f_c(90.), use_savgol_filter=True, plot=False, scalar_moment=10e6, return_dataframe=False)
+    if TL_new_v is None:
+        TL_new_v, _, _ = pm.get_TL_curves(file_curve, freq, unknown='velocity', **dict_TL)
+    if TL_new_p is None:
+        TL_new_p, _, _ = pm.get_TL_curves(file_curve, freq, unknown='pressure', **dict_TL)
+
+    ## Compute nightglow scaling which is period dependent unlike dayglow
+    ## Dayglow scaling is period independent because dominated by advection
+    periods = np.array([1./freq for freq in TL_new_v.keys()])
+    alphas_nightglow = compute_alphas(f_rho, f_VER_nightglow, periods, alts_nightglow, times,)
+    alphas_dayglow = [alpha_dayglow for _ in periods]
+
+    ## Compute SNR from velocity TLs
+    dayglow_scaling = compute_airglow_SNR(TL_new_v, distances, beta, periods, alphas_dayglow, photons_dayglow, f_VER=f_VER_dayglow, alts=alts_dayglow, file_airglow='', m0=m0)
+    nightglow_scaling = compute_airglow_SNR(TL_new_v, distances, beta, periods, alphas_nightglow, photons_nightglow, f_VER=f_VER_nightglow, alts=alts_nightglow, file_airglow='', m0=m0)
+
+    return dayglow_scaling, nightglow_scaling, TL_new_v, TL_new_p
+
 def get_airglow_scaling(file_curve, freq, file_atmos='./data/profile_VCD_for_scaling_pd.csv', file_nightglow='./data/VER_profile_scaled.csv', file_dayglow='./data/VER_profile_dayglow.csv', R0=6052000, sigma_balloon=1e-2, boost_SNR=1., photons_dayglow=3.5e5, alpha_dayglow=1e-5, photons_nightglow=2e4, beta=1., TL_new_v=None, TL_new_p=None, m0 = 7.):
 
     ## Standard Inputs
