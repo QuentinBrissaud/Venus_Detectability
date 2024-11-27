@@ -16,6 +16,7 @@ import matplotlib.colors as mcol
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from matplotlib.ticker import FuncFormatter
 import matplotlib.patches as mpatches
+from scipy.signal import savgol_filter
 
 def spherical_cap_boundary(lat_0, lon_0, radius, R0, num_points=100):
     """
@@ -440,32 +441,13 @@ def get_TL_curves_one_freq(pd_all_amps_in, freq, dist_min, rho0, rhob, cb, use_s
     q75 /= scalar_moment
 
     if use_savgol_filter:
-        from scipy.signal import savgol_filter
         
-        """
-        isep = np.argmin(abs(x-2000))
-
-        fs = []
-        for y in [pd_all_amps.median_rw.values, pd_all_amps['median_q0.25_rw'].values, pd_all_amps['median_q0.75_rw'].values]:
-            y_smooth = np.zeros_like(y)
-            window_size = 5  # Must be odd
-            poly_order = 3
-            y_smooth[:isep] = savgol_filter(y[:isep], window_size, poly_order)
-            window_size = 15  # Must be odd
-            poly_order = 3
-            y_smooth[isep:] = savgol_filter(y[isep:], window_size, poly_order)
-            f = interpolate.interp1d(x, y_smooth, bounds_error=False, fill_value=(y_smooth[0], y_smooth[-1]))
-            fs.append(f)
-        """
         fs = []
         for y in [median, q25, q75]:
             y_smooth = np.zeros_like(y)
             window_size = 5  # Must be odd
             poly_order = 3
             y_smooth[:] = savgol_filter(y[:], window_size, poly_order)
-            #window_size = 15  # Must be odd
-            #poly_order = 3
-            #y_smooth[isep:] = savgol_filter(y[isep:], window_size, poly_order)
             f = interpolate.interp1d(x, y_smooth, bounds_error=False, fill_value=(y_smooth[0], y_smooth[-1]))
             fs.append(f)
 
@@ -764,6 +746,30 @@ class proba_model:
             if self.return_rate:
                 for region, rate in zip(l_regions, rates):
                     self.rates_all[region][:,:,ilon] = rate
+
+def merge_and_fix_surface_ratio_region(pattern, regions=['corona', 'rift', 'ridge', 'intraplate'], write=False):
+
+    ## e.g., pattern = './data/surface_ratios_{region}_active.csv'
+
+    all_data = pd.DataFrame()
+    for region in regions:
+        data = pd.read_csv(pattern.format(region), header=[0])
+        data['region'] = region
+        all_data = pd.concat([all_data, data])
+    all_data.reset_index(drop=True, inplace=True)
+
+    iloc = -1
+    for _, group in all_data.groupby(['lon', 'lat']):
+        iloc += 1
+        all_data.loc[all_data.index.isin(group.index), 'iloc'] = iloc
+
+    all_data.loc[all_data.iradius==0, 'ratio'] = 0.
+    all_data.loc[all_data.iradius==0, 'ratio_map'] = 0.
+
+    if write:
+        all_data.to_csv(pattern.format('all'), header=True, index=False)
+
+    return all_data
 
 ###################
 ## PROBA AIRGLOW ##

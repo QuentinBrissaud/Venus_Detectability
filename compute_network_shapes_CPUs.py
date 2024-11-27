@@ -63,8 +63,11 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
     #for iscenario in tqdm(range(500,503)):
     for iscenario in tqdm(range(max_dist.shape[0]), disable=not iCPU == 0):
 
+        if not iscenario == 160:
+            continue
+
         #print(f'Scenario {iscenario}')
-        max_map = max_dist[iscenario,:].reshape(shape_init)
+        max_map = max_dist[iscenario,:]#.reshape(shape_init)
 
         dict_scenario = dict(iscenario=iscenario)
         lats_loc = lats_stations[iscenario,:]
@@ -75,22 +78,21 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
 
         inds_last = []
         first_pass_done = False
-        for threshold in thresholds[:]:
+        threshold_offset = 80.
+        for ithreshold, threshold in enumerate(thresholds[:]):
 
             #print(f'threshold {first_pass_done} - {threshold}')
-            inds = np.where(max_map.ravel()/1e3<=threshold)[0] 
+            inds = np.where(max_map/1e3<=threshold+threshold_offset)[0] 
             if inds.size == 0:
                 continue
 
             inds_to_process = np.setdiff1d(inds, inds_last)
             polys_processed_temp = unary_union([polys[ii] for ii in inds_to_process])
             if first_pass_done:
-                #print('-->', polys_loc)
                 polys_processed_temp = unary_union([polys_processed, polys_processed_temp])
             else:
                 first_pass_done = True
-            #print(polys_loc)
-            #print(polys_loc_temp)
+
             polys_processed = polys_processed_temp
             inds_last = inds
             
@@ -99,7 +101,7 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
 
             gdf.append(dict_loc)
 
-            if plot:
+            if plot and ithreshold == 0:
                 plt.figure()
                 ax = plt.gca()
 
@@ -109,9 +111,7 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
                 else:
                     polys_loc = [polys_processed]
 
-                #print(polys_loc)
                 for poly in polys_loc:
-                    #print(poly)
                     coords = np.array(poly.exterior.coords)
                     p = Polygon_mpl(coords, facecolor = 'tab:green')
                     #plt.scatter(x[inds], y[inds], s=1, label=threshold)
@@ -125,6 +125,10 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
                 ax.scatter(x, y, marker='x', s=100, color='red')
                 #ax.legend()
                 ax.set_title(threshold)
+
+                break
+
+        break
 
     gdf = gpd.GeoDataFrame(gdf)
     return gdf
@@ -230,7 +234,7 @@ def get_f_VER(file_airglow):
     
     return f_VER
 
-def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_balloon=1e-2, boost_SNR=1., m0=7.,):
+def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_balloon=1e-2, boost_SNR=1., m0=7., adjust_indexes=False):
 
     #scaling = pd.read_csv(file_scaling, header=[0])
     scaling = scaling_in.copy()
@@ -247,8 +251,35 @@ def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_
     flipped_diff = np.flip(diff, axis=0)
     flipped_indices = flipped_diff.argmin(axis=0) ## In order to get argmin to return the largest index if multiple minima
     original_indices = diff.shape[0] - 1 - flipped_indices
-    #original_indices = diff.argmin(axis=0)
+
     coefs = distances_r0[original_indices]
+    if adjust_indexes:
+        # Determine the dominant direction
+        differences = np.diff(original_indices)
+        if np.sum(differences > 0) >= np.sum(differences < 0):
+            dominant_direction = "increasing"
+        else:
+            dominant_direction = "decreasing"
+
+        # Adjust indices to follow the dominant direction
+        adjusted_indices = original_indices.copy()
+        for i in range(1, len(adjusted_indices)):
+            if dominant_direction == "increasing" and adjusted_indices[i] < adjusted_indices[i - 1]:
+                adjusted_indices[i] = adjusted_indices[i - 1]  # Force monotonic increase
+            elif dominant_direction == "decreasing" and adjusted_indices[i] > adjusted_indices[i - 1]:
+                adjusted_indices[i] = adjusted_indices[i - 1]  # Force monotonic decrease
+
+        coefs = distances_r0[adjusted_indices]
+
+    coefs[0] = 0.
+
+    
+    plt.figure()
+    plt.plot(distances, distances_r0[original_indices], label='orig')
+    plt.plot(distances, distances_r0[adjusted_indices])
+    plt.legend()
+    
+
     f_alt_scaling = interpolate.interp1d(distances, coefs, bounds_error=False, fill_value=(coefs[0], coefs[-1]))
 
     return f_alt_scaling
@@ -330,9 +361,7 @@ def get_airglow_scaling(file_curve, freq, file_atmos='./data/profile_VCD_for_sca
     nightglow_scaling = compute_airglow_SNR(TL_new_v, distances, beta, periods, alphas_nightglow, photons_nightglow, f_VER=f_VER_nightglow, alts=alts_nightglow, file_airglow='', m0=m0)
 
     ## Compute frequency dependent scaling function
-    #opt_scaling = dict(R0=R0, sigma_balloon=sigma_balloon, boost_SNR=boost_SNR, m0=7.,)
-    #f_alt_scaling = get_airglow_scaling_from_TL(TL_new_p, period, file_scaling, **opt_scaling)
-    opt_scaling = dict(R0=R0, sigma_balloon=sigma_balloon, m0=m0,)
+    opt_scaling = dict(R0=R0, sigma_balloon=sigma_balloon, m0=m0, adjust_indexes=True)
     f_alt_scaling_dayglow, f_alt_scaling_nightglow = dict(), dict()
     for period, scaling in dayglow_scaling.groupby('period'):
         TL = TL_new_p[1./period]

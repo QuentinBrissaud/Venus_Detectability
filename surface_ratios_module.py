@@ -697,7 +697,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
         use_period = False
         if 'period' in gdf.columns:
             use_period = True
-            periods = gdf.periods.unique()
+            periods = gdf.period.unique()
         use_gdf = True
 
     ## polygon2 is a multipolygon
@@ -739,6 +739,9 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                     break
 
                 intersection = polygon_region.intersection(poly)
+
+                #plt.figure(); [plt.scatter(np.array(geo.exterior.coords[:])[:,0], np.array(geo.exterior.coords[:])[:,1], color='black', s=1) for geo in polygon_region.geoms]; [plt.scatter(np.array(geo.exterior.coords[:])[:,0], np.array(geo.exterior.coords[:])[:,1], color='red', s=1) for geo in poly.geoms]; [plt.scatter(np.array(geo.exterior.coords[:])[:,0], np.array(geo.exterior.coords[:])[:,1], color='green', s=1) for geo in intersection.geoms]; plt.savefig('./test.png')
+                #bp()
                 
                 ratio = compute_surface_area_ratio(intersection, polygon_map)
                 ratio_map = compute_surface_area_ratio(intersection, polygon_region)
@@ -954,27 +957,6 @@ def compute_coordinates_TL_across_CPUs(l_radius, num_points, lon_0, lat_0, R0, t
 
     return  coords_lon, coords_lat, n_subshapes
 
-def merge_and_fix_surface_ratio_region(pattern, regions=['corona', 'rift', 'ridge', 'intraplate'], write=False):
-
-    ## e.g., pattern = './data/surface_ratios_{region}_active.csv'
-
-    all_data = pd.DataFrame()
-    for region in regions:
-        data = pd.read_csv(pattern.format(region), header=[0])
-        data['region'] = region
-        all_data = pd.concat([all_data, data])
-    all_data.reset_index(drop=True, inplace=True)
-
-    iloc = -1
-    for _, group in all_data.groupby(['lon', 'lat']):
-        iloc += 1
-        all_data.loc[all_data.index.isin(group.index), 'iloc'] = iloc
-
-    if write:
-        all_data.to_csv(pattern.format('all'), header=True, index=False)
-
-    return all_data
-
 ##########################
 if __name__ == '__main__':
 
@@ -1047,18 +1029,15 @@ if __name__ == '__main__':
                 l_points=l_points, 
                 surface1_lon=surface1_lon, 
                 surface1_lat=surface1_lat,
-                #gdf=gpd.read_file(f"./data/airglow_shp/network_SNRnight10.0_SNRday1.shp"),
-                nb_CPU=3,
+                gdf=gpd.read_file(f"./data/airglow_shp/network_SNRnight10.0_SNRday1.shp"),
+                nb_CPU=1,
             )
-            #opt_surface = dict(lon_0=0.,l_radius=l_radius,proj=proj, polygon_map=polygon_map, polygon_region=unioned_linestring, subsample_db=5, buffer_line=120000,threshold_neighbor_pts=20e6, random_state=0,n_subshapes=n_subshapes, l_points=l_points, surface1_lon=surface1_lon, surface1_lat=surface1_lat,nb_CPU=20)
             ratio_df = compute_surface_ratios_wrinkles_across_CPU(**opt_surface)
             if find_active_corona_only:
                 region = f'{region}_active'
 
-            bp()
-
             #plt.figure(); plt.plot(ratio_df.radius.iloc[:30], ratio_df.ratio_map.iloc[:30]); plt.savefig('./test2.png')
-            #ratio_df['region'] = region
-            #ratio_df.to_csv(f'./data/surface_ratios/surface_ratios_airglow_{region}.csv', index=False, header=True)
+            ratio_df['region'] = region
+            ratio_df.to_csv(f'./data/surface_ratios/surface_ratios_airglow_{region}.csv', index=False, header=True)
 
     bp()
