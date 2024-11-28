@@ -961,7 +961,7 @@ def compute_multiple_trajectories(proba_model, winds, lats, lons):
     return pd_final_probas
 """
 
-def compute_proba_one_trajectory(trajectory_in, snrs, lats, lons, probas, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False):
+def compute_proba_one_trajectory(trajectory_in, snrs, lats, lons, probas, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False, kind='nearest'):
 #def compute_proba_one_trajectory(trajectory_in, proba_model, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False):
     
     #snrs = proba_model.SNR_thresholds
@@ -981,62 +981,34 @@ def compute_proba_one_trajectory(trajectory_in, snrs, lats, lons, probas, snrs_s
     LATS_STAT, LONS_STAT = np.meshgrid(lats, lons)
     LATS_STAT, LONS_STAT = LATS_STAT.ravel(), LONS_STAT.ravel()
 
-    print(LONS_STAT.shape, probas.shape)
-
     id_bins, id_map = np.meshgrid(np.arange(trajectory.shape[0]), np.arange(LATS_STAT.size))
     id_bins_shape = id_bins.shape
     id_bins, id_map = id_bins.ravel(), id_map.ravel()
     _, _, dists = g.inv(trajectory.lon.values[id_bins], trajectory.lat.values[id_bins], LONS_STAT[id_map], LATS_STAT[id_map])
     dists = dists.reshape(id_bins_shape)
     iclosest = dists.argmin(axis=0)
-    trajectory['id_map'] = iclosest
-    trajectory['lat_map'] = LATS_STAT[iclosest]
-    trajectory['lon_map'] = LONS_STAT[iclosest]
+    
+    f_traj_lat = interpolate.interp1d(trajectory.dt.values, trajectory.lat.values, bounds_error=False, fill_value=(trajectory.lat.values[0], trajectory.lat.values[-1]), kind=kind)
+    f_traj_lon = interpolate.interp1d(trajectory.dt.values, trajectory.lon.values, bounds_error=False, fill_value=(trajectory.lon.values[0], trajectory.lon.values[-1]), kind=kind)
 
-    delta_each_hour = 1./24.
-    f_traj_lat = interpolate.interp1d(trajectory.dt.values, trajectory.lat.values, bounds_error=False, fill_value=trajectory.lat.values[-1])
-    f_traj_lon = interpolate.interp1d(trajectory.dt.values, trajectory.lon.values, bounds_error=False, fill_value=trajectory.lon.values[-1])
     new_trajectory = pd.DataFrame()
     for isnr, snr in tqdm(zip(isnrs, snrs_selected), total=len(isnrs), disable=disable_bar):
-        probas_snr_ravelled = probas[isnr].ravel()
-        time_start = 0.
-        proba_not_detecting = 1.
-        for _, one_dt in trajectory.groupby('bin_dt'):
-            time_end = time_start + 1.
-            times = np.arange(time_start, time_end, delta_each_hour)
-            lats_hours, lons_hour = f_traj_lat(times), f_traj_lon(times)
-            closest_cell = np.array([np.argmin(np.sqrt((lat-lats)**2+(lon-lons)**2)) for lat, lon in zip(lats_hours, lons_hour)])
-            proba_not_detecting *= np.prod((1.-probas_snr_ravelled[closest_cell])**delta_each_hour)
-            time_start = time_end
 
-            trajectory_loc = trajectory.loc[trajectory.index.isin(one_dt.index)].copy()
-            trajectory_loc['proba'] = 1.-proba_not_detecting
-            trajectory_loc['snr'] = snr
-            new_trajectory = pd.concat([new_trajectory, trajectory_loc])
+        probas_snr_ravelled = probas[isnr].ravel()[iclosest]
+        f_proba = interpolate.interp1d(trajectory.dt.values, probas_snr_ravelled, bounds_error=False, fill_value=(probas_snr_ravelled[0], probas_snr_ravelled[-1]))
+        
+
+        times = np.arange(0., trajectory.dt.max()+1., 1.)
+        new_trajectory_loc = pd.DataFrame()
+        new_trajectory_loc['time'] = times*3600.
+        new_trajectory_loc['proba'] = 1.-np.cumprod(1.-f_proba(times))
+        new_trajectory_loc['lat'] = f_traj_lat(times)
+        new_trajectory_loc['lon'] = f_traj_lon(times)
+        new_trajectory_loc['snr'] = snr
+        new_trajectory = pd.concat([new_trajectory, new_trajectory_loc])
+        
     new_trajectory.reset_index(drop=True, inplace=True)
 
-    ## Compute total probability
-    """
-    proba_total = np.ones(probas.shape[0])
-    #probas_loc = probas.reshape((probas.shape[0], np.prod(probas.shape[1:])))
-    new_trajectory = pd.DataFrame()
-    for bin_dt, one_dt in tqdm(trajectory.groupby('bin_dt')):
-
-        ## Take average of probabilities in the bin
-        proba_loc = np.zeros(probas.shape[0])
-        for isnr in range(proba_loc.size):
-            l_probas = []
-            for _, one_loc in one_dt.iterrows():
-                l_probas.append( probas[isnr].ravel()[int(one_loc.id_map)] )
-            proba_loc[isnr] = np.median(l_probas)
-        proba_total *= (1.-proba_loc)
-        
-        for isnr, snr in zip(isnrs, snrs_selected):
-            trajectory_loc = trajectory.loc[trajectory.index.isin(one_dt.index)].copy()
-            trajectory_loc['proba'] = 1-proba_total[isnr]
-            trajectory_loc['snr'] = snr
-            new_trajectory = pd.concat([new_trajectory, trajectory_loc])
-    """
     return new_trajectory
 
 def compute_multiple_trajectories(snrs, lats, lons, probas, winds, mission_durations, max_number_months, inputs):
@@ -1214,7 +1186,7 @@ def interpolate_2d(current_map, lons_in, lats, toplot_in, dnew=1.):
     if lons_in.max() > 180.:
         lons[lons>=180.] -= 360.
     idx = np.argsort(lons)
-    toplot[:,:] = toplot[idx,:]
+    toplot[:,:] = toplot[:,idx]
     lons = lons[idx]
 
     #lons_new = np.arange(lons.min(), lons.max(), 2*dnew)
@@ -1426,7 +1398,6 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
             m_winds = one_map_traj(fig, ax_winds, lats, lons, new_trajectories_snr, None, n_colors=n_colors, c_cbar=c_cbar, fontsize=fontsize, plot_time=plot_time, add_cbar=False)
             
             if VENUS is None:
-
                 
                 fmt = lambda x, pos: '{:.2f} %'.format(x*1e2)
                 idx_snr = np.argmin(abs(proba_model.SNR_thresholds-snr))
