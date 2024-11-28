@@ -579,23 +579,4 @@ def get_stations(lats, lons, offsets=[[2., 4.], [10., 20.]], use_airglow=False, 
 ##########################
 if __name__ == '__main__':
 
-    dlon = 2.
-    lats, lons = np.arange(-90, 89, dlon/2.), np.arange(-180, 179, dlon)
-    LATS, LONS, shape_init = get_grid(lats, lons)
-
-    polys = get_polys(LONS, LATS, dlon, R0=6052000)
-
-    dlon_stations = 5.
-    lats, lons = np.arange(-90, 89, dlon/2.), np.arange(-180, 179, dlon)
-    lats_stations, lons_stations, id_scenario, id_stat = get_stations(lats, lons, offsets=[[2., 4.]], fixed_stations=dict())
-
-    file_max_dist = './data/max_dist/max_dist_2_4.npy'
-    max_dist = np.load(file_max_dist, mmap_mode='r')
-
-    plot = False
-    R0 = 6052000
-    thresholds = np.arange(10000, np.pi*R0/1.001, 5e5)[:]/1e3
-    #gdf = compute_surfaces(LATS, LONS, lats_stations, lons_stations, polys, plot, R0, max_dist)
-    gdf = compute_surfaces_CPUs(thresholds, LATS, LONS, lats_stations, lons_stations, polys, plot, R0, max_dist, nb_CPU=1)
-    gdf.to_file("./data/network_shp/network_2_4.shp")
     bp()
