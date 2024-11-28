@@ -771,6 +771,84 @@ def merge_and_fix_surface_ratio_region(pattern, regions=['corona', 'rift', 'ridg
 
     return all_data
 
+#################
+## PROBAS CPUs ##
+#################
+
+def compute_scores_across_one_CPU(dict_init, st_in, st_lat_in, st_lon_in, st_los_in, lats_stat, lons_stat, dict_import, dict_transformation, dict_synth, dict_region, dict_prior, dict_arrival_times, data_process):
+
+    process_id, idx_start_all = data_process
+
+    one_stacker_locator = stacker_locator(**dict_init)
+    one_stacker_locator.import_data(st_in, st_lat_in, st_lon_in, st_los_in, lats_stat, lons_stat, **dict_import, **dict_transformation, **dict_synth,)
+    one_stacker_locator.compute_scores(**dict_region, **dict_prior, **dict_arrival_times, verbose=process_id==0, idx_start_all=idx_start_all)
+
+    loc_ids = np.arange(idx_start_all[0], min(idx_start_all[-1]+dict_import['batch_size'],one_stacker_locator.size_parameter_space))
+    return one_stacker_locator.scores[loc_ids], one_stacker_locator.amplitude[loc_ids], one_stacker_locator.t0s[loc_ids], one_stacker_locator.lons_sat_selected[:,loc_ids], one_stacker_locator.lats_sat_selected[:,loc_ids], one_stacker_locator.los_sat_selected[:,loc_ids], one_stacker_locator.lons_IPP_selected[:,loc_ids], one_stacker_locator.lats_IPP_selected[:,loc_ids], one_stacker_locator.arr_times[:,loc_ids]
+
+class proba_model_CPUs(proba_model):
+
+    def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax):
+        super().__init__(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax)
+
+    def compute_scores_across_CPUs(self, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, all_lons, homogeneous_ratios, m_min, r_venus, return_rate=False, rates_provided=None, verbose=False nb_CPU=12):
+
+        idx_start_all = np.arange(0, self.size_parameter_space, self.batch_size)
+        nb_chunks = idx_start_all.size
+        #partial_compute_scores = partial(compute_scores_across_one_CPU, self.dict_init, self.st_in, self.st_lat_in, self.st_lon_in, self.st_los_in, self.lats_stat, self.lons_stat, self.dict_import, self.dict_synth, self.dict_region, self.dict_prior, self.dict_arrival_times)
+        
+        dict_synth = self.dict_synth.copy()
+        dict_synth['use_synthetics'] = False # Turn off synthetics since they are already generated
+        partial_compute_scores = partial(compute_scores_across_one_CPU, self.dict_init, self.st_orig_raw, self.st_lat_in, self.st_lon_in, self.st_los_in, self.lats_stat, self.lons_stat, self.dict_import, dict_synth, self.dict_region, self.dict_prior, self.dict_arrival_times)
+            
+        N = min(nb_CPU, nb_chunks)
+        ## If one CPU requested, no need for deployment
+        if N == 1:
+            print('Running serial')
+            all_stacker_locator = [partial_compute_scores((0, idx_start_all))]
+            list_of_lists = [(0, idx_start_all)]
+
+        ## Otherwise, we pool the processes
+        else:
+        
+            step_idx =  nb_chunks//N
+            list_of_lists = []
+            for i in range(N):
+                idx = np.arange(i*step_idx, (i+1)*step_idx)
+                if i == N-1:
+                    idx = np.arange(i*step_idx, nb_chunks)
+                list_of_lists.append( (i, idx_start_all[idx]) )
+
+            with get_context("spawn").Pool(processes = N) as p:
+                print(f'Running across {N} CPU')
+                all_stacker_locator = p.map(partial_compute_scores, list_of_lists)
+                p.close()
+                p.join()
+
+        for i, idx in list_of_lists:
+            data = all_stacker_locator[i]
+            loc_ids = np.arange(idx[0], min(idx[-1]+self.dict_import['batch_size'],self.size_parameter_space))
+            """
+            self.scores[loc_ids] = data[0]
+            self.t0s[loc_ids] = data[1]
+            self.lons_sat_selected[:,loc_ids] = data[2]
+            self.lats_sat_selected[:,loc_ids] = data[3]
+            self.los_sat_selected[:,loc_ids] = data[4]
+            self.lons_IPP_selected[:,loc_ids] = data[5]
+            self.lats_IPP_selected[:,loc_ids] = data[6]
+            """
+            self.scores[loc_ids] = data[0]
+            self.amplitude[loc_ids] = data[1]
+            self.t0s[loc_ids] = data[2]
+            self.lons_sat_selected[:,loc_ids] = data[3]
+            self.lats_sat_selected[:,loc_ids] = data[4]
+            self.los_sat_selected[:,loc_ids] = data[5]
+            self.lons_IPP_selected[:,loc_ids] = data[6]
+            self.lats_IPP_selected[:,loc_ids] = data[7]
+            self.arr_times[:,loc_ids] = data[8]
+
+        self.scores_computed = True
+
 ###################
 ## PROBA AIRGLOW ##
 ###################
@@ -1019,16 +1097,15 @@ def compute_multiple_trajectories(snrs, lats, lons, probas, winds, mission_durat
     icpu, LATS, LONS = inputs
 
     opt_trajectory = dict(
-        nstep_max=1000, 
         time_max=3600*24*30*max_number_months,
         save_trajectory=False,
         folder = './data/',
     )
+    
     pd_final_probas = pd.DataFrame()
     for lat, lon in tqdm(zip(LATS, LONS), total=LATS.size, disable=not icpu==0):
         start_location = [lat, lon] # lat, lon
         trajectory = VCD.compute_trajectory(winds, start_location, **opt_trajectory)
-        #new_trajectories = compute_proba_one_trajectory(trajectory, proba_model, norm_factor_time=3600., disable_bar=True) ## Venusquake
         new_trajectories = compute_proba_one_trajectory(trajectory, snrs, lats, lons, probas, norm_factor_time=3600., disable_bar=True) ## Venusquake
         
         for target_duration in mission_durations:
