@@ -1400,7 +1400,7 @@ def add_vertical_cbar(fig, ax, sc, cmap_bounds, fmt, c_cbar, name_cbar):
     cbar.set_label(name_cbar, rotation=90, labelpad=10, color=c_cbar, fontsize=12)
     cbar.ax.tick_params(axis='both', colors=c_cbar, labelsize=12., )
 
-def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=1., n_colors=10, c_cbar='white', fontsize=15., ylim=[0., 20.], plot_time=False, plot_volcanoes=False, file='./figures/Figure_2_balloon_proba.pdf'):
+def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=1., n_colors=10, c_cbar='white', fontsize=15., ylim=[0., 20.], plot_time=False, plot_volcanoes=False, n_colors_proba = 15, n_colors_winds = 7, file='./figures/Figure_2_balloon_proba.pdf'):
     
     lats, lons = proba_model.all_lats, proba_model.all_lons
     
@@ -1427,11 +1427,11 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
             
             if VENUS is None:
 
-                n_colors = 10
+                
                 fmt = lambda x, pos: '{:.2f} %'.format(x*1e2)
                 idx_snr = np.argmin(abs(proba_model.SNR_thresholds-snr))
                 x, y, toplot, _, _ = interpolate_2d(m, proba_model.all_lons, proba_model.all_lats, proba_model.proba_all[idx_snr,:,:], dnew=1.)
-                cmap_bounds = np.linspace(toplot.min(), toplot.max(), n_colors)
+                cmap_bounds = np.linspace(toplot.min(), toplot.max(), n_colors_proba)
                 cmap_p = cm.get_cmap("Reds", lut=len(cmap_bounds))
                 norm = mcol.BoundaryNorm(cmap_bounds, cmap_p.N)
                 sc_proba = m.pcolormesh(x, y, toplot, zorder=0, cmap=cmap_p, norm=norm)
@@ -1439,7 +1439,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
                 m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=12)
                 add_vertical_cbar(fig, ax, sc_proba, cmap_bounds, fmt, c_cbar, 'Hourly probability') 
 
-                n_colors = 7
+                
                 fmt = lambda x, pos: '{:.0f}'.format(x)
                 unknown = 'wind_direction'
                 vmax, vmin = -88, -92
@@ -1449,7 +1449,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
                 LON, LAT = np.meshgrid(winds_grp.lon.unique(), winds_grp.lat.unique())
                 x, y = m_winds(LON.ravel(), LAT.ravel())
                 x, y = x.reshape(lat_size, lon_size), y.reshape(lat_size, lon_size)
-                cmap_bounds = np.linspace(vmin, vmax, n_colors)
+                cmap_bounds = np.linspace(vmin, vmax, n_colors_winds)
                 cmap_w = cm.get_cmap("Greens", lut=len(cmap_bounds))
                 norm = mcol.BoundaryNorm(cmap_bounds, cmap_w.N)
                 sc_winds = m_winds.pcolormesh(x, y, winds_grp[unknown].values.reshape(lat_size, lon_size), norm=norm, cmap=cmap_w, alpha=0.8, zorder=5)
