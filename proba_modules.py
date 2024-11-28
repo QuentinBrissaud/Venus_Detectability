@@ -1455,6 +1455,13 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     ax_vs_lat.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
     ax_vs_lat.set_ylabel('Latitude', fontsize=fontsize, color='tab:red')
     ax_vs_lat.tick_params(axis='y', labelcolor='tab:red')
+    rect = plt.Rectangle(
+        (0, 0), 1, 1,
+        transform=ax_vs_lat.transAxes,  # Use axes coordinates
+        color='white',
+        zorder=-1,  # Place it below all other elements
+    )
+    ax_vs_lat.add_patch(rect)
 
     #ax_vs_time.legend(frameon=False, title='SNR')
     ax_vs_time_x = ax_vs_time.twinx()
@@ -1474,13 +1481,6 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     ax_vs_time.set_xlim([0., new_trajectories_snr.time.max()/(24*3600.)])
     ax_vs_time.set_ylim(ylim)
     ax_vs_time.grid(alpha=0.4)
-    rect = plt.Rectangle(
-        (0, 0), 1, 1,
-        transform=ax_vs_time.transAxes,  # Use axes coordinates
-        color='white',
-        zorder=-1,  # Place it below all other elements
-    )
-    ax_vs_time.add_patch(rect)
     
     # Creating the first legend
     first_legend = ax_vs_time.legend(handles=lines_snr, loc='upper left', title='SNR', frameon=False, labelcolor=c_cbar, fontsize=fontsize)
