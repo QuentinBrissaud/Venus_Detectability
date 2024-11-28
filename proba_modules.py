@@ -1457,6 +1457,9 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     ax_vs_lat.tick_params(axis='y', labelcolor='tab:red')
 
     #ax_vs_time.legend(frameon=False, title='SNR')
+    ax_vs_time_x = ax_vs_time.twinx()
+    ax_vs_time_x.plot(new_trajectories_snr.time.iloc[:-1]/(24*3600.), 1e2*np.diff(new_trajectories_snr.proba))
+
     ax_vs_time.set_ylabel('Detection probability (%)', color=c_cbar, fontsize=fontsize)
     ax_vs_time.set_xlabel('Time (days)', color=c_cbar, fontsize=fontsize)
     ax_vs_time.set_xlim([0., new_trajectories_snr.time.max()/(24*3600.)])
