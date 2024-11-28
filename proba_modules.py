@@ -1459,7 +1459,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
         (0, 0), 1, 1,
         transform=ax_vs_lat.transAxes,  # Use axes coordinates
         color='white',
-        zorder=-1,  # Place it below all other elements
+        zorder=-100,  # Place it below all other elements
     )
     ax_vs_lat.add_patch(rect)
 
@@ -1472,7 +1472,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
         (0, 0), 1, 1,
         transform=ax_vs_time_x.transAxes,  # Use axes coordinates
         color='white',
-        zorder=-1,  # Place it below all other elements
+        zorder=-100,  # Place it below all other elements
     )
     ax_vs_time_x.add_patch(rect)
 
