@@ -791,7 +791,7 @@ class proba_model_CPUs(proba_model):
     def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax):
         super().__init__(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax)
 
-    def compute_scores_across_CPUs(self, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, all_lons, homogeneous_ratios, m_min, r_venus, return_rate=False, rates_provided=None, verbose=False nb_CPU=12):
+    def compute_scores_across_CPUs(self, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, all_lons, homogeneous_ratios, m_min, r_venus, return_rate=False, rates_provided=None, verbose=False, nb_CPU=12):
 
         idx_start_all = np.arange(0, self.size_parameter_space, self.batch_size)
         nb_chunks = idx_start_all.size
