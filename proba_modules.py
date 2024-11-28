@@ -1507,7 +1507,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     fig.subplots_adjust(wspace=0.15, bottom=0.2, top=0.8)
     fig.patch.set_alpha(0.)
     if file is not None:
-        fig.savefig(file,)
+        fig.savefig(file, transparent=True)
 
 
 ##########################
