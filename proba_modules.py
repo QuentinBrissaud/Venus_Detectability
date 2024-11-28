@@ -1186,7 +1186,7 @@ def interpolate_2d(current_map, lons_in, lats, toplot_in, dnew=1.):
     if lons_in.max() > 180.:
         lons[lons>=180.] -= 360.
     idx = np.argsort(lons)
-    toplot[:,:] = toplot[:,idx]
+    toplot = toplot[:,idx].T
     lons = lons[idx]
 
     #lons_new = np.arange(lons.min(), lons.max(), 2*dnew)
