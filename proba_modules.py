@@ -1459,10 +1459,10 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     #ax_vs_time.legend(frameon=False, title='SNR')
     ax_vs_time_x = ax_vs_time.twinx()
     ax_vs_time_x.plot(new_trajectories_snr.time.iloc[:-1]/(24*3600.), 1e2*np.diff(new_trajectories_snr.proba), color='tab:blue')
-    ax_vs_time_x.set_ylabel('\frac{\partial}{\partial t}\mathbb{P}', color='tab:blue', fontsize=fontsize)
+    ax_vs_time_x.set_ylabel('$\frac{\partial}{\partial t}\mathbb{P}$', color='tab:blue', fontsize=fontsize)
     ax_vs_time_x.tick_params(axis='both', right=False, labelright=False)
 
-    ax_vs_time.set_ylabel('Detection probability \mathbb{P} (%)', color=c_cbar, fontsize=fontsize)
+    ax_vs_time.set_ylabel('Detection probability $\mathbb{P}$ (%)', color=c_cbar, fontsize=fontsize)
     ax_vs_time.set_xlabel('Time (days)', color=c_cbar, fontsize=fontsize)
     ax_vs_time.set_xlim([0., new_trajectories_snr.time.max()/(24*3600.)])
     ax_vs_time.set_ylim(ylim)
