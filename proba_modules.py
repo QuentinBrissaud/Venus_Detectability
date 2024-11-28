@@ -981,6 +981,8 @@ def compute_proba_one_trajectory(trajectory_in, snrs, lats, lons, probas, snrs_s
     LATS_STAT, LONS_STAT = np.meshgrid(lats, lons)
     LATS_STAT, LONS_STAT = LATS_STAT.ravel(), LONS_STAT.ravel()
 
+    print(LONS_STAT.shape, probas.shape)
+
     id_bins, id_map = np.meshgrid(np.arange(trajectory.shape[0]), np.arange(LATS_STAT.size))
     id_bins_shape = id_bins.shape
     id_bins, id_map = id_bins.ravel(), id_map.ravel()
@@ -1398,7 +1400,7 @@ def add_vertical_cbar(fig, ax, sc, cmap_bounds, fmt, c_cbar, name_cbar):
     cbar.set_label(name_cbar, rotation=90, labelpad=10, color=c_cbar, fontsize=12)
     cbar.ax.tick_params(axis='both', colors=c_cbar, labelsize=12., )
 
-def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=1., n_colors=10, c_cbar='white', fontsize=15., ylim=[0., 20.], plot_time=False, plot_volcanoes=False):
+def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=1., n_colors=10, c_cbar='white', fontsize=15., ylim=[0., 20.], plot_time=False, plot_volcanoes=False, file='./figures/Figure_2_balloon_proba.pdf'):
     
     lats, lons = proba_model.all_lats, proba_model.all_lons
     
@@ -1514,7 +1516,8 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     fig.align_ylabels() 
     fig.subplots_adjust(wspace=0.15, bottom=0.2, top=0.8)
     fig.patch.set_alpha(0.)
-    fig.savefig('./figures/Figure_2_balloon_proba.pdf',)
+    if file is not None:
+        fig.savefig(file,)
 
 
 ##########################

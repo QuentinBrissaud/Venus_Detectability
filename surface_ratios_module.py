@@ -716,6 +716,9 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
 
             for iradius, radius in enumerate(l_radius):
 
+                if iradius > 5:
+                    continue
+
                 if use_gdf: ## We already computed the shapes
                     diff_lat = abs(gdf.lon_statio-lon_0_current)
                     diff_lon = abs(gdf.lat_statio-lat_0_current)
@@ -730,6 +733,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                             diff_t = abs(gdf.period-period)
                             poly = poly.loc[diff_t==diff_t.min()]
                         poly = poly.geometry.iloc[0]
+                        bp()
                 else:
                     trajectory = np.c_[surface1_lon[:,iloc,iradius], surface1_lat[:,iloc,iradius]]
                     poly, _ = compute_TL_region_v2(polygon_map, trajectory, proj, lon_0, lon_0_current, sensor, n_subshapes[iloc,iradius], **opt_TL)
@@ -748,6 +752,11 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                 loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': ratio, 'ratio_map': ratio_map, 'period': period}
                 ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
 
+            print(f'iloc {iloc} - radius {radius}: ratio-> {ratio} ratio_map-> {ratio_map}')
+
+
+    bp()
+                
     ratio_df.reset_index(drop=True, inplace=True)
     return ratio_df
 
