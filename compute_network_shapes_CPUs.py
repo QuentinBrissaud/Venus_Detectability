@@ -268,12 +268,12 @@ def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_
 
     coefs[0] = 0.
 
-    
+    """
     plt.figure()
     plt.plot(distances, distances_r0[original_indices], label='orig')
     plt.plot(distances, distances_r0[adjusted_indices])
     plt.legend()
-    
+    """
 
     f_alt_scaling = interpolate.interp1d(distances, coefs, bounds_error=False, fill_value=(coefs[0], coefs[-1]))
 

@@ -17,6 +17,16 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from matplotlib.ticker import FuncFormatter
 import matplotlib.patches as mpatches
 from scipy.signal import savgol_filter
+import VCD_trajectory_modules as VCD
+
+from scipy import interpolate
+from pyrocko import moment_tensor as pmt
+from scipy import special
+import matplotlib.pyplot as plt
+from pyrocko import moment_tensor as mtm
+from scipy.special import erf
+
+from scipy.interpolate import RectBivariateSpline
 
 def spherical_cap_boundary(lat_0, lon_0, radius, R0, num_points=100):
     """
@@ -54,16 +64,6 @@ def spherical_cap_boundary(lat_0, lon_0, radius, R0, num_points=100):
     boundary = list(zip(lon, lat))
 
     return boundary
-
-def spherical_cap_boundary_v2(g, lat_0, lon_0, radius, num_points=100):
-
-    n_radius = len(l_radius)
-    lat, lon = np.repeat(lat_0, n_radius*num_points), np.repeat(lon_0, n_radius*num_points)
-    angles = np.linspace(1., 359., n_radius*num_points)
-    R = np.repeat(l_radius, num_points)
-    endlon, endlat, _ = g.fwd(lon, lat, angles, R)
-
-    return list(zip(endlon, endlat))
 
 def spherical_cap_boundary_v3(g, l_lat_0, l_lon_0, l_radius, proj, num_points=100):
 
@@ -281,30 +281,6 @@ def compute_ratios(VENUS, l_lon, l_lat, output_file, R0=6052000, num_points=100,
 ###############################
 ## PROBABILISTIC MODEL BELOW ##
 ###############################
-
-from scipy import interpolate
-from pyrocko import moment_tensor as pmt
-from obspy.geodetics import degrees2kilometers
-from tqdm import tqdm
-from scipy import special
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import os
-from pyrocko import moment_tensor as mtm
-from tqdm import tqdm
-import geopandas as gpd 
-from scipy.special import erf
-
-from mpl_toolkits.basemap import Basemap
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-from scipy.interpolate import RectBivariateSpline
-from matplotlib.ticker import FuncFormatter
-import matplotlib.cm as cm
-import matplotlib.colors as mcol
-from matplotlib.patches import Polygon  as Polygon_mpl
-from sklearn.cluster import DBSCAN
-import matplotlib.patches as mpatches
 
 def get_regions(dir_venus_data):
 
@@ -702,7 +678,7 @@ class proba_model:
         DISTS, MAG, DETECT_T, LOC = DISTS.ravel(), MAG.ravel(), DETECT_T.ravel(), LOC.ravel()
         return DISTS, MAG, DETECT_T, LOC
 
-    def compute_proba_map(self, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, all_lons, homogeneous_ratios, m_min, r_venus, return_rate=False, rates_provided=None, verbose=False):
+    def compute_proba_map(self, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, all_lons, homogeneous_ratios, m_min, r_venus, return_rate=False, rates_provided=None, verbose=False, disable_tqdm=False):
 
         self.scenario = scenario
         self.dists = dists
@@ -727,7 +703,7 @@ class proba_model:
             l_regions = self.pd_slopes.loc[:, ~self.pd_slopes.columns.str.contains('type')].columns.values
             self.rates_all = {region: np.zeros((self.SNR_thresholds.size, self.all_lats.size, self.all_lons.size)) for region in l_regions}
 
-        for ilon, lon in tqdm(enumerate(self.all_lons), total=len(all_lons)):
+        for ilon, lon in tqdm(enumerate(self.all_lons), total=len(all_lons), disable=disable_tqdm):
 
             lats_orig, lons_orig = self.all_lats, np.array([lon])
             lats, lons = np.meshgrid(lats_orig, lons_orig)
@@ -775,38 +751,60 @@ def merge_and_fix_surface_ratio_region(pattern, regions=['corona', 'rift', 'ridg
 ## PROBAS CPUs ##
 #################
 
-def compute_scores_across_one_CPU(dict_init, st_in, st_lat_in, st_lon_in, st_los_in, lats_stat, lons_stat, dict_import, dict_transformation, dict_synth, dict_region, dict_prior, dict_arrival_times, data_process):
+def compute_proba_map_one_CPU(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, homogeneous_ratios, m_min, r_venus, inputs):
 
-    process_id, idx_start_all = data_process
+    process_id, idx, all_lons = inputs
 
-    one_stacker_locator = stacker_locator(**dict_init)
-    one_stacker_locator.import_data(st_in, st_lat_in, st_lon_in, st_los_in, lats_stat, lons_stat, **dict_import, **dict_transformation, **dict_synth,)
-    one_stacker_locator.compute_scores(**dict_region, **dict_prior, **dict_arrival_times, verbose=process_id==0, idx_start_all=idx_start_all)
-
-    loc_ids = np.arange(idx_start_all[0], min(idx_start_all[-1]+dict_import['batch_size'],one_stacker_locator.size_parameter_space))
-    return one_stacker_locator.scores[loc_ids], one_stacker_locator.amplitude[loc_ids], one_stacker_locator.t0s[loc_ids], one_stacker_locator.lons_sat_selected[:,loc_ids], one_stacker_locator.lats_sat_selected[:,loc_ids], one_stacker_locator.los_sat_selected[:,loc_ids], one_stacker_locator.lons_IPP_selected[:,loc_ids], one_stacker_locator.lats_IPP_selected[:,loc_ids], one_stacker_locator.arr_times[:,loc_ids]
+    one_proba_model = proba_model(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax)
+    opt_model = dict(
+        scenario = scenario, # Iris' seismicity scenario
+        dists = dists, # Low discretization will lead to terrible not unit integrals
+        M0s = M0s, # Low discretization will lead to terrible not unit integrals
+        SNR_thresholds = SNR_thresholds,
+        noise_level = noise_level, # noise level in Pa
+        duration = duration, # (1/mission_duration)
+        all_lats = all_lats,
+        all_lons = all_lons,
+        homogeneous_ratios = homogeneous_ratios,
+        m_min = m_min,
+        r_venus = r_venus,
+        disable_tqdm = not process_id == 0
+    )
+    one_proba_model.compute_proba_map(**opt_model)
+    return one_proba_model.proba_all
+    
 
 class proba_model_CPUs(proba_model):
 
     def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax):
         super().__init__(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax)
 
-    def compute_scores_across_CPUs(self, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, all_lons, homogeneous_ratios, m_min, r_venus, return_rate=False, rates_provided=None, verbose=False, nb_CPU=12):
+    def compute_scores_across_CPUs(self, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, all_lons, homogeneous_ratios, m_min, r_venus, nb_CPU=12):
 
-        idx_start_all = np.arange(0, self.size_parameter_space, self.batch_size)
+        self.scenario = scenario 
+        self.dists = dists 
+        self.M0s = M0s 
+        self.SNR_thresholds = SNR_thresholds  
+        self.noise_level = noise_level 
+        self.duration = duration 
+        self.all_lats = all_lats 
+        self.all_lons = all_lons 
+        self.homogeneous_ratios = homogeneous_ratios 
+        self.m_min = m_min 
+        self.r_venus = r_venus
+        self.size_parameter_space = self.all_lons.size
+
+        idx_start_all = np.arange(0, self.size_parameter_space)
         nb_chunks = idx_start_all.size
-        #partial_compute_scores = partial(compute_scores_across_one_CPU, self.dict_init, self.st_in, self.st_lat_in, self.st_lon_in, self.st_los_in, self.lats_stat, self.lons_stat, self.dict_import, self.dict_synth, self.dict_region, self.dict_prior, self.dict_arrival_times)
         
-        dict_synth = self.dict_synth.copy()
-        dict_synth['use_synthetics'] = False # Turn off synthetics since they are already generated
-        partial_compute_scores = partial(compute_scores_across_one_CPU, self.dict_init, self.st_orig_raw, self.st_lat_in, self.st_lon_in, self.st_los_in, self.lats_stat, self.lons_stat, self.dict_import, dict_synth, self.dict_region, self.dict_prior, self.dict_arrival_times)
+        partial_compute_proba_map = partial(compute_proba_map_one_CPU, self.pd_slopes, self.surface_ratios, self.TL, self.TL_qmin, self.TL_qmax, self.scenario, self.dists, self.M0s, self.SNR_thresholds, self.noise_level, self.duration, self.all_lats, self.homogeneous_ratios, self.m_min, self.r_venus)
             
         N = min(nb_CPU, nb_chunks)
         ## If one CPU requested, no need for deployment
         if N == 1:
             print('Running serial')
-            all_stacker_locator = [partial_compute_scores((0, idx_start_all))]
-            list_of_lists = [(0, idx_start_all)]
+            all_stacker_locator = [partial_compute_proba_map((0, idx_start_all))]
+            list_of_lists = [(0, idx_start_all, self.all_lons[idx_start_all])]
 
         ## Otherwise, we pool the processes
         else:
@@ -817,37 +815,18 @@ class proba_model_CPUs(proba_model):
                 idx = np.arange(i*step_idx, (i+1)*step_idx)
                 if i == N-1:
                     idx = np.arange(i*step_idx, nb_chunks)
-                list_of_lists.append( (i, idx_start_all[idx]) )
+                list_of_lists.append( (i, idx_start_all[idx], self.all_lons[idx_start_all[idx]]) )
 
             with get_context("spawn").Pool(processes = N) as p:
                 print(f'Running across {N} CPU')
-                all_stacker_locator = p.map(partial_compute_scores, list_of_lists)
+                all_stacker_locator = p.map(partial_compute_proba_map, list_of_lists)
                 p.close()
                 p.join()
 
-        for i, idx in list_of_lists:
-            data = all_stacker_locator[i]
-            loc_ids = np.arange(idx[0], min(idx[-1]+self.dict_import['batch_size'],self.size_parameter_space))
-            """
-            self.scores[loc_ids] = data[0]
-            self.t0s[loc_ids] = data[1]
-            self.lons_sat_selected[:,loc_ids] = data[2]
-            self.lats_sat_selected[:,loc_ids] = data[3]
-            self.los_sat_selected[:,loc_ids] = data[4]
-            self.lons_IPP_selected[:,loc_ids] = data[5]
-            self.lats_IPP_selected[:,loc_ids] = data[6]
-            """
-            self.scores[loc_ids] = data[0]
-            self.amplitude[loc_ids] = data[1]
-            self.t0s[loc_ids] = data[2]
-            self.lons_sat_selected[:,loc_ids] = data[3]
-            self.lats_sat_selected[:,loc_ids] = data[4]
-            self.los_sat_selected[:,loc_ids] = data[5]
-            self.lons_IPP_selected[:,loc_ids] = data[6]
-            self.lats_IPP_selected[:,loc_ids] = data[7]
-            self.arr_times[:,loc_ids] = data[8]
-
-        self.scores_computed = True
+        self.proba_all = np.zeros((self.SNR_thresholds.size, self.all_lats.size, self.all_lons.size))
+        for i, idx, _ in list_of_lists:
+            proba_all_loc = all_stacker_locator[i]
+            self.proba_all[:,:,idx] = proba_all_loc
 
 ###################
 ## PROBA AIRGLOW ##
@@ -1013,31 +992,7 @@ def plot_proba_all_trajectories(pd_final_probas, mission_durations, xlim=[0, 1],
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
 
-import VCD_trajectory_modules as VCD
-"""
-def compute_multiple_trajectories(proba_model, winds, lats, lons):
-    
-    LATS, LONS = np.meshgrid(lats, lons)
-    LATS, LONS = LATS.ravel(), LONS.ravel()
-    
-    opt_trajectory = dict(
-        nstep_max=1000, 
-        time_max=3600*24*30*2,
-        save_trajectory=False,
-        folder = './data/',
-    )
-    pd_final_probas = pd.DataFrame()
-    for lat, lon in tqdm(zip(LATS, LONS), total=LATS.size):
-        start_location = [lat, lon] # lat, lon
-        trajectory = VCD.compute_trajectory(winds, start_location, **opt_trajectory)
-        new_trajectories = compute_proba_one_trajectory(trajectory, proba_model, norm_factor_time=3600., disable_bar=True) ## Venusquake
-        pd_final_proba = new_trajectories.groupby('snr').last().reset_index()[['snr', 'proba']]
-        pd_final_proba['lat'] = lat
-        pd_final_proba['lon'] = lon
-        pd_final_probas = pd.concat([pd_final_probas, pd_final_proba])
-        
-    return pd_final_probas
-"""
+
 
 def compute_proba_one_trajectory(trajectory_in, snrs, lats, lons, probas, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False, kind='nearest'):
 #def compute_proba_one_trajectory(trajectory_in, proba_model, snrs_selected=[1.,2.,5.], norm_factor_time=3600., disable_bar=False):
@@ -1078,7 +1033,7 @@ def compute_proba_one_trajectory(trajectory_in, snrs, lats, lons, probas, snrs_s
 
         times = np.arange(0., trajectory.dt.max()+1., 1.)
         new_trajectory_loc = pd.DataFrame()
-        new_trajectory_loc['time'] = times*3600.
+        new_trajectory_loc['time'] = times*norm_factor_time
         new_trajectory_loc['proba'] = 1.-np.cumprod(1.-f_proba(times))
         new_trajectory_loc['lat'] = f_traj_lat(times)
         new_trajectory_loc['lon'] = f_traj_lon(times)
@@ -1090,10 +1045,7 @@ def compute_proba_one_trajectory(trajectory_in, snrs, lats, lons, probas, snrs_s
     return new_trajectory
 
 def compute_multiple_trajectories(snrs, lats, lons, probas, winds, mission_durations, max_number_months, inputs):
-#def compute_multiple_trajectories(proba_model, winds, mission_durations, max_number_months, inputs):
-    
-    #LATS, LONS = np.meshgrid(lats, lons)
-    #LATS, LONS = LATS.ravel(), LONS.ravel()
+
     icpu, LATS, LONS = inputs
 
     opt_trajectory = dict(

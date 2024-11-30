@@ -716,8 +716,8 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
 
             for iradius, radius in enumerate(l_radius):
 
-                if iradius > 5:
-                    continue
+                #if iradius > 5:
+                #    continue
 
                 if use_gdf: ## We already computed the shapes
                     diff_lat = abs(gdf.lon_statio-lon_0_current)
@@ -728,12 +728,13 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                         ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
                         continue
                     else:
+                        
                         poly = gdf.loc[(diff_lat==diff_lat.min())&(diff_lon==diff_lon.min())&(diff_dist==diff_dist.min())]
                         if use_period:
                             diff_t = abs(gdf.period-period)
                             poly = poly.loc[diff_t==diff_t.min()]
                         poly = poly.geometry.iloc[0]
-                        bp()
+                       
                 else:
                     trajectory = np.c_[surface1_lon[:,iloc,iradius], surface1_lat[:,iloc,iradius]]
                     poly, _ = compute_TL_region_v2(polygon_map, trajectory, proj, lon_0, lon_0_current, sensor, n_subshapes[iloc,iradius], **opt_TL)
@@ -751,12 +752,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                 ratio_map = compute_surface_area_ratio(intersection, polygon_region)
                 loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': ratio, 'ratio_map': ratio_map, 'period': period}
                 ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
-
-            print(f'iloc {iloc} - radius {radius}: ratio-> {ratio} ratio_map-> {ratio_map}')
-
-
-    bp()
-                
+ 
     ratio_df.reset_index(drop=True, inplace=True)
     return ratio_df
 
@@ -969,9 +965,6 @@ def compute_coordinates_TL_across_CPUs(l_radius, num_points, lon_0, lat_0, R0, t
 ##########################
 if __name__ == '__main__':
 
-    compute_TL_coords = False
-    compute_ratios = True
-
     dlat = 5
     l_lon = np.arange(0, 359, dlat*2)
     l_lat = np.arange(-89, 90, dlat)
@@ -1007,46 +1000,45 @@ if __name__ == '__main__':
         with open('./data/TL_data/n_subshapes.npy', 'wb') as f: np.save(f, np.array(n_subshapes))
     """
 
-    if compute_ratios:
+    opt_maps = dict(
+        folder_TL_data='./data/TL_data/', 
+        lat_0=lat_0, 
+        lon_0=lon_0, 
+        R0=R0
+    )
+    polygon_map, surface1_lon, surface1_lat, n_subshapes = compute_map_and_TL(**opt_maps)
 
-        opt_maps = dict(
-            folder_TL_data='./data/TL_data/', 
-            lat_0=lat_0, 
-            lon_0=lon_0, 
-            R0=R0
+    PATH_VENUS_DATA = os.path.join("./data/")
+    #find_active_corona_only=False
+    #l_unioned_linestring = load_wrinkles_shp(PATH_VENUS_DATA, epsilon=0.5)
+    find_active_corona_only=True
+    l_unioned_linestring = load_tectonic_iris_shp(PATH_VENUS_DATA, polygon_map, epsilon=1e-1, lat_0=-89., lon_0=0., R0=6052000, find_active_corona_only=find_active_corona_only)
+
+    for region, unioned_linestring in l_unioned_linestring.items():
+        opt_surface = dict(
+            lon_0=lon_0,
+            l_radius=l_radius, 
+            proj=proj, 
+            polygon_map=polygon_map, 
+            polygon_region=unioned_linestring, 
+            subsample_db=5, 
+            buffer_line=120000, 
+            threshold_neighbor_pts=20e6, 
+            random_state=0,
+            n_subshapes=n_subshapes, 
+            l_points=l_points, 
+            surface1_lon=surface1_lon, 
+            surface1_lat=surface1_lat,
+            #gdf=gpd.read_file(f"./data/airglow_shp/network_SNRnight10.0_SNRday1.shp"),
+            gdf=gpd.read_file(f"./data/airglow_shp/network_SNRnight10.0_SNRday1.shp"),
+            nb_CPU=1,
         )
-        polygon_map, surface1_lon, surface1_lat, n_subshapes = compute_map_and_TL(**opt_maps)
+        ratio_df = compute_surface_ratios_wrinkles_across_CPU(**opt_surface)
+        if find_active_corona_only:
+            region = f'{region}_active'
 
-        PATH_VENUS_DATA = os.path.join("./data/")
-        #find_active_corona_only=False
-        #l_unioned_linestring = load_wrinkles_shp(PATH_VENUS_DATA, epsilon=0.5)
-        find_active_corona_only=True
-        l_unioned_linestring = load_tectonic_iris_shp(PATH_VENUS_DATA, polygon_map, epsilon=1e-1, lat_0=-89., lon_0=0., R0=6052000, find_active_corona_only=find_active_corona_only)
-
-        for region, unioned_linestring in l_unioned_linestring.items():
-            opt_surface = dict(
-                lon_0=lon_0,
-                l_radius=l_radius, 
-                proj=proj, 
-                polygon_map=polygon_map, 
-                polygon_region=unioned_linestring, 
-                subsample_db=5, 
-                buffer_line=120000, 
-                threshold_neighbor_pts=20e6, 
-                random_state=0,
-                n_subshapes=n_subshapes, 
-                l_points=l_points, 
-                surface1_lon=surface1_lon, 
-                surface1_lat=surface1_lat,
-                gdf=gpd.read_file(f"./data/airglow_shp/network_SNRnight10.0_SNRday1.shp"),
-                nb_CPU=1,
-            )
-            ratio_df = compute_surface_ratios_wrinkles_across_CPU(**opt_surface)
-            if find_active_corona_only:
-                region = f'{region}_active'
-
-            #plt.figure(); plt.plot(ratio_df.radius.iloc[:30], ratio_df.ratio_map.iloc[:30]); plt.savefig('./test2.png')
-            ratio_df['region'] = region
-            ratio_df.to_csv(f'./data/surface_ratios/surface_ratios_airglow_{region}.csv', index=False, header=True)
+        #plt.figure(); plt.plot(ratio_df.radius.iloc[:30], ratio_df.ratio_map.iloc[:30]); plt.savefig('./test2.png')
+        ratio_df['region'] = region
+        ratio_df.to_csv(f'./data/surface_ratios/surface_ratios_airglow_{region}.csv', index=False, header=True)
 
     bp()

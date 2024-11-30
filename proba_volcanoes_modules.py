@@ -164,7 +164,7 @@ def get_amps_at_baloons(T0s_offset, LAT_offset, ID_LAT0, TIMES, times, shape_TIM
 
 import matplotlib.colors as colors
 
-def add_cbar(ax, sc, label, fontsize=12., bbox_to_anchor=(0.15, 1.01, 1, 1.)):
+def add_cbar(ax, sc, label, fontsize=12., bbox_to_anchor=(0.15, 1.01, 1, 1.), color='black'):
 
     axins = inset_axes(ax, width="70%", height="2.5%", loc='lower left', 
                     bbox_to_anchor=bbox_to_anchor, bbox_transform=ax.transAxes, borderpad=0)
@@ -173,7 +173,7 @@ def add_cbar(ax, sc, label, fontsize=12., bbox_to_anchor=(0.15, 1.01, 1, 1.)):
     cbar.ax.xaxis.set_ticks_position('top') 
     cbar.ax.xaxis.set_label_position("top")
     cbar.ax.xaxis.tick_top()
-    cbar.ax.set_xlabel(label, labelpad=2, fontsize=fontsize) 
+    cbar.ax.set_xlabel(label, labelpad=2, fontsize=fontsize, color=color) 
 
     return cbar
 
@@ -196,7 +196,7 @@ def plot_seq(ax_first, loc_catalog, cmap, color, type_ev=None, fontsize_text=12.
             color=color
         )
 
-def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., fontsize=12., fontsize_label=20.):
+def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., fontsize=12., fontsize_label=20., color_labels='black'):
 
     time_collapse = UTCDateTime('2018-05-01')
     time_collapse_end = UTCDateTime('2018-08-05')
@@ -239,12 +239,19 @@ def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., font
     catalog_hawai_manuloa = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Manu Loa eruption',])]
     plot_seq(ax_first, catalog_hawai_manuloa, 'Purples', 'tab:purple', type_ev='', maxval_annot=5., str_annot='Manu Loa\neruption', vmax=catalog_hawai.mag.max())
 
-    ax_first.set_ylabel('Magnitude (Mw)', fontsize=fontsize)
+    ax_first.set_ylabel('Magnitude (Mw)', fontsize=fontsize, color=color_labels)
     ax_first.text(-0., 1., 'a)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax_first.transAxes)
     ax_first.set_xlim([catalog_hawai.UTC.min(), catalog_hawai.UTC.max()])
     ax_first.set_ylim([catalog_hawai.mag.min(), max_val])
-    ax_zoom.tick_params(axis='both', labelsize=fontsize, rotation=90.)
-    ax_first.tick_params(axis='both', labelsize=fontsize)
+    ax_zoom.tick_params(axis='both', labelsize=fontsize, rotation=90., colors=color_labels)
+    ax_first.tick_params(axis='both', labelsize=fontsize, colors=color_labels)
+    rect = plt.Rectangle(
+        (0, 0), 1, 1,
+        transform=ax_first.transAxes,  # Use axes coordinates
+        color='white',
+        zorder=-100,  # Place it below all other elements
+    )
+    ax_first.add_patch(rect)
 
     #ax_zoom = fig.add_subplot(grid[:2,3:], sharey=ax_first)
 
@@ -269,11 +276,19 @@ def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., font
     ax_zoom.tick_params(axis='both', labelleft=False)
     date_format = mdates.DateFormatter('%m-%d')  # Format: YYYY-MM-DD
     ax_zoom.xaxis.set_major_formatter(date_format)
-    ax_zoom.set_title(f'Collapse events\nin 2018')
+    ax_zoom.set_title(f'Collapse events\nin 2018', color=color_labels)
     ax_zoom.set_xlim([catalog_hawai_collapse.UTC.min(), catalog_hawai_collapse.UTC.max()])
     ax_zoom.text(-0., 1., 'b)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax_zoom.transAxes)
 
-def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offset, lat_offset, LAT_offset_shape, mask, noise_level = 0.01, factor = (np.log10(2.)+4.)/4., snr_threshold=1, plot_SNR_distrib=True, fontsize=12., number_over_snr=None, amps_ev_reshaped=None):
+    rect = plt.Rectangle(
+        (0, 0), 1, 1,
+        transform=ax_zoom.transAxes,  # Use axes coordinates
+        color='white',
+        zorder=-100,  # Place it below all other elements
+    )
+    ax_zoom.add_patch(rect)
+
+def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offset, lat_offset, LAT_offset_shape, mask, noise_level = 0.01, factor = (np.log10(2.)+4.)/4., snr_threshold=1, plot_SNR_distrib=True, fontsize=12., number_over_snr=None, amps_ev_reshaped=None, color_labels='black'):
 
     dists = np.logspace(0, 4.*factor, 100)
     fontsize_label = 20.
@@ -297,7 +312,7 @@ def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat
     ax_zoom = fig.add_subplot(grid[:2,4:], sharey=ax_first)
 
     ## Plotting time distribution of events and labels
-    plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., fontsize=12., fontsize_label=20.)
+    plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., fontsize=12., fontsize_label=20., color_labels=color_labels)
 
     if plot_SNR_distrib:
         ax = fig.add_subplot(grid[2:4,4:],)
@@ -319,11 +334,11 @@ def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat
         ax_proba.tick_params(axis='y', labelcolor='tab:red')
         ax_proba.set_ylim([1e-2, 1e1])
         ax_proba.tick_params(axis='both', labelsize=fontsize)
-        ax.set_xlabel('SNR', fontsize=fontsize)
-        ax_proba.set_ylabel('PDF or Probability', fontsize=fontsize)
+        ax.set_xlabel('SNR', fontsize=fontsize, color=color_labels)
+        ax_proba.set_ylabel('PDF or Probability', fontsize=fontsize, color=color_labels)
         ax.set_xscale('log')
         ax.set_ylim([1e-2, 1e1])
-        ax.tick_params(axis='both', labelsize=fontsize, labelleft=False)
+        ax.tick_params(axis='both', labelsize=fontsize, labelleft=False, colors=color_labels)
 
     else:
         ax = fig.add_subplot(grid[2:4,4:],)
@@ -331,12 +346,19 @@ def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat
         #sc = ax.contourf(all_times[ID_TIMES_EV], DISTS, TL_new(DISTS, all_mags[ID_TIMES_EV])/noise_level, levels=[0.1, 0.5, 1, 5, 10], locator=ticker.LogLocator(), cmap='Blues', )
         #sc = ax.pcolormesh(all_times, dists, ZTL.T, norm=colors.LogNorm(vmin=0.1, vmax=10), cmap=cmap)
         sc = ax.pcolormesh(all_times, dists, ZTL.T, vmin=1., vmax=10, cmap=cmap)
-        ax.set_xlabel('Time\n(years since main shock)', fontsize=fontsize)
-        ax.set_ylabel('Distance (km)', fontsize=fontsize)
+        ax.set_xlabel('Time\n(years since main shock)', fontsize=fontsize, color=color_labels)
+        ax.set_ylabel('Distance (km)', fontsize=fontsize, color=color_labels)
         ax.set_yscale('log')
-        add_cbar(ax, sc, f'Peak SNR', fontsize=fontsize)
+        add_cbar(ax, sc, f'Peak SNR', fontsize=fontsize, color=color_labels)
         ax.set_facecolor(cmaplist[0])
     ax.text(-0., 1., 'f)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax.transAxes)
+    rect = plt.Rectangle(
+        (0, 0), 1, 1,
+        transform=ax.transAxes,  # Use axes coordinates
+        color='white',
+        zorder=-100,  # Place it below all other elements
+    )
+    ax.add_patch(rect)
 
     ##
     ## Plotting peak SNR
@@ -350,13 +372,20 @@ def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat
     #sc = plt.pcolormesh(t0s_offset, lat_offset, mags_ev_reshaped.max(axis=0))
     #sc = plt.pcolormesh(lon_offset, lat_offset, np.log(amps_ev_reshaped.mean(axis=-1)).T)
     #sc = plt.pcolormesh(t0s_offset, lat_offset, distances_ev_reshaped.min(axis=0))
-    ax.set_xlabel('Balloon start time (years since main shock)', fontsize=fontsize)
-    ax.set_ylabel('Balloon\nstart latitude (deg)', fontsize=fontsize)
-    cbar = add_cbar(ax, sc, f'Peak SNR', fontsize=fontsize)
+    ax.set_xlabel('Balloon start time (years since main shock)', fontsize=fontsize, color=color_labels)
+    ax.set_ylabel('Balloon\nstart latitude (deg)', fontsize=fontsize, color=color_labels)
+    cbar = add_cbar(ax, sc, f'Peak SNR', fontsize=fontsize, color=color_labels)
     ax.set_facecolor(cmaplist[0])
     ax.axhline(lat_vol, color='black', linestyle='--', alpha=0.5)
-    ax.tick_params(axis='both', labelsize=fontsize)
+    ax.tick_params(axis='both', labelsize=fontsize, colors=color_labels)
     ax.text(-0., 1., 'e)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax.transAxes)
+    rect = plt.Rectangle(
+        (0, 0), 1, 1,
+        transform=ax.transAxes,  # Use axes coordinates
+        color='white',
+        zorder=-100,  # Place it below all other elements
+    )
+    ax.add_patch(rect)
 
     ##
     ## Plotting number of events > SNR
@@ -374,12 +403,19 @@ def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat
     Z = number_over_snr.mean(axis=0)
     sc = ax.pcolormesh(datetimes, lat_offset+lat_vol, Z, cmap='Greens', norm=norm)
     #ax.set_xlabel('Balloon start time\n(years since main shock)', fontsize=fontsize)
-    ax.set_ylabel('Balloon\nstart latitude (deg)', fontsize=fontsize)
-    cbar2 = add_cbar(ax, sc, f'Number of events with SNR > {snr_threshold:.0f}', fontsize=fontsize)
+    ax.set_ylabel('Balloon\nstart latitude (deg)', fontsize=fontsize, color=color_labels)
+    cbar2 = add_cbar(ax, sc, f'Number of events with SNR > {snr_threshold:.0f}', fontsize=fontsize, color=color_labels)
     ax.axhline(lat_vol, color='black', linestyle='--', alpha=0.5)
-    ax.tick_params(axis='both', labelsize=fontsize, labelbottom=False)
+    ax.tick_params(axis='both', labelsize=fontsize, labelbottom=False, colors=color_labels)
     ax.text(-0., 1., 'c)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax.transAxes)
     ax.set_facecolor(cmaplist[0])
+    rect = plt.Rectangle(
+        (0, 0), 1, 1,
+        transform=ax.transAxes,  # Use axes coordinates
+        color='white',
+        zorder=-100,  # Place it below all other elements
+    )
+    ax.add_patch(rect)
 
     import datetime
     interval = datetime.timedelta(days=30*6) # 6 months
@@ -391,10 +427,17 @@ def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat
     ax_dis.axhline(1., linestyle='--', color='black')
     ax_dis.set_ylim([1e-2, 6])
     ax_dis.xaxis_date()
-    ax_dis.set_ylabel(f'Number events per flight\n with SNR > {snr_threshold:.0f}', fontsize=fontsize)
-    ax_dis.tick_params(axis='both', labelsize=fontsize,)
+    ax_dis.set_ylabel(f'Number events per flight\n with SNR > {snr_threshold:.0f}', fontsize=fontsize, color=color_labels)
+    ax_dis.tick_params(axis='both', labelsize=fontsize, colors=color_labels)
     ax_dis.legend(frameon=False, loc='upper left')
     ax.text(-0., -0.25, 'd)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax.transAxes)
+    rect = plt.Rectangle(
+        (0, 0), 1, 1,
+        transform=ax.transAxes,  # Use axes coordinates
+        color='white',
+        zorder=-100,  # Place it below all other elements
+    )
+    ax.add_patch(rect)
 
     fig.align_ylabels()
     fig.align_xlabels()
