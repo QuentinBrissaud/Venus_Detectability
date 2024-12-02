@@ -53,6 +53,8 @@ def compute_surfaces_CPUs(thresholds, LATS, LONS, lats_stations, lons_stations, 
 
 def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys, plot, R0, inputs):
 
+    debug = False
+
     iCPU, max_dist = inputs
 
     proj = pyproj.Proj(proj='robin', lat_0=0., lon_0=0., a=R0, b=R0)
@@ -62,22 +64,23 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
     #for iscenario in tqdm(range(500,503)):
     for iscenario in tqdm(range(max_dist.shape[0]), disable=not iCPU == 0):
 
-        #if not iscenario == 160:
-        #    continue
+        if debug:
+            if not iscenario == 160:
+                continue
 
-        #print(f'Scenario {iscenario}')
-        max_map = max_dist[iscenario,:]#.reshape(shape_init)
+        max_map = max_dist[iscenario,:]
 
         dict_scenario = dict(iscenario=iscenario)
         lats_loc = lats_stations[iscenario,:]
         lons_loc = lons_stations[iscenario,:]
         for istat in range(lats_stations.shape[1]):
-            dict_scenario[f'lat_station_{istat}'] = lats_loc[istat]
-            dict_scenario[f'lon_station_{istat}'] = lons_loc[istat]
+            dict_scenario[f'lat_{istat}'] = lats_loc[istat]
+            dict_scenario[f'lon_{istat}'] = lons_loc[istat]
 
         inds_last = []
         first_pass_done = False
         threshold_offset = 80.
+        cpt_threshold = 0
         for ithreshold, threshold in enumerate(thresholds[:]):
 
             #print(f'threshold {first_pass_done} - {threshold}')
@@ -85,13 +88,13 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
             if inds.size == 0:
                 continue
 
+            cpt_threshold += 1
+
             inds_to_process = np.setdiff1d(inds, inds_last)
             polys_processed_temp = unary_union([polys[ii] for ii in inds_to_process])
             if first_pass_done:
                 polys_processed_temp = unary_union([polys_processed, polys_processed_temp])
-            else:
-                first_pass_done = True
-
+            
             polys_processed = polys_processed_temp
             inds_last = inds
             
@@ -100,7 +103,7 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
 
             gdf.append(dict_loc)
 
-            if plot and ithreshold == 0:
+            if plot and cpt_threshold < 5 and debug:
                 plt.figure()
                 ax = plt.gca()
 
@@ -124,6 +127,11 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
                 ax.scatter(x, y, marker='x', s=100, color='red')
                 #ax.legend()
                 ax.set_title(threshold)
+
+            first_pass_done = True
+
+        if debug:
+            break
 
     gdf = gpd.GeoDataFrame(gdf)
     return gdf
