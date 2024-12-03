@@ -727,14 +727,20 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                     #diff_lon = abs(gdf.lat_statio-lat_0_current)
                     diff_lat = abs(gdf.lon-lon_0_current)
                     diff_lon = abs(gdf.lat-lat_0_current)
-                    diff_dist = abs(gdf['distance']*1e3-radius)
+                    poly = gdf.loc[(diff_lat==diff_lat.min())&(diff_lon==diff_lon.min())]
+                    if poly.shape[0] > 0:
+                        print('Issue with poly location not found')
+                        loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0.}
+                        ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
+                        continue
+                    diff_dist = abs(poly['distance']*1e3-radius)
                     if diff_dist.min() > threshold_acceptable: ## In case where there is no distance close to radius, i.e., no stations close enough to the source for a network for example we give a zero radius
                         loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0.}
                         ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
                         continue
                     else:
                         
-                        poly = gdf.loc[(diff_lat==diff_lat.min())&(diff_lon==diff_lon.min())&(diff_dist==diff_dist.min())]
+                        poly = poly.loc[diff_dist==diff_dist.min()]
                         if use_period:
                             diff_t = abs(poly.period-period)
                             poly = poly.loc[diff_t==diff_t.min()]
