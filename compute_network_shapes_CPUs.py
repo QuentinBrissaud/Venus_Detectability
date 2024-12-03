@@ -71,7 +71,7 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
 
         max_map = max_dist[iscenario_loc,:]
 
-        dict_scenario = dict(iscenario=iscenario)
+        dict_scenario = {'iscenario': iscenario}
         lats_loc = lats_stations[iscenario,:]
         lons_loc = lons_stations[iscenario,:]
         for istat in range(lats_stations.shape[1]):
