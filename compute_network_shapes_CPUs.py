@@ -55,7 +55,7 @@ def compute_surfaces_CPUs(thresholds, LATS, LONS, lats_stations, lons_stations, 
 
 def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys, plot, R0, inputs):
 
-    debug = True
+    debug = False
 
     iCPU, all_idx, max_dist = inputs
 
