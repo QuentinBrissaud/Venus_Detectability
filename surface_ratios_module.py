@@ -721,8 +721,10 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                 #    continue
 
                 if use_gdf: ## We already computed the shapes
-                    diff_lat = abs(gdf.lon_statio-lon_0_current)
-                    diff_lon = abs(gdf.lat_statio-lat_0_current)
+                    #diff_lat = abs(gdf.lon_statio-lon_0_current)
+                    #diff_lon = abs(gdf.lat_statio-lat_0_current)
+                    diff_lat = abs(gdf.lon-lon_0_current)
+                    diff_lon = abs(gdf.lat-lat_0_current)
                     diff_dist = abs(gdf['distance']*1e3-radius)
                     if diff_dist.min() > threshold_acceptable: ## In case where there is no distance close to radius, i.e., no stations close enough to the source for a network for example we give a zero radius
                         loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0.}
@@ -760,7 +762,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
 def compute_surface_ratios_wrinkles_filtergdf(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, input_with_gdf):
 
     gdf, input = input_with_gdf
-    ratio_df = compute_surface_ratios_wrinkles_filtergdf(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, gdf, input)
+    ratio_df = compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, gdf, input)
     return ratio_df
 
 def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, l_points, n_subshapes=None, surface1_lon=None, surface1_lat=None, gdf=None, filter_gdf_before_CPU=True, nb_CPU=12):
@@ -771,6 +773,10 @@ def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_ma
 
     if n_subshapes is not None:
         n_subshapes = n_subshapes.reshape(surface1_lon.shape[1:])
+
+    if gdf is not None:
+        gdf['lat'] = gdf['lat_0']
+        gdf['lon'] = gdf['lon_0']
 
     nb_chunks = l_points.shape[0]
     if filter_gdf_before_CPU:
