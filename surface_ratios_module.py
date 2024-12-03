@@ -690,6 +690,8 @@ def compute_map_and_TL(folder_TL_data, lat_0=-89., lon_0=0., R0=6052000):
 
 def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, gdf, input):
 
+    i_cpu, l_points, surface1_lon, surface1_lat, n_subshapes = input
+
     use_gdf = False
     periods = [0.]
     if gdf is not None:
@@ -701,7 +703,6 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
         use_gdf = True
 
     ## polygon2 is a multipolygon
-    i_cpu, l_points, surface1_lon, surface1_lat, n_subshapes = input
     opt_TL = dict(subsample_db=subsample_db, buffer_line=buffer_line, threshold_neighbor_pts=threshold_neighbor_pts, random_state=random_state)
 
     if i_cpu == 0:
@@ -756,7 +757,13 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
     ratio_df.reset_index(drop=True, inplace=True)
     return ratio_df
 
-def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, l_points, n_subshapes=None, surface1_lon=None, surface1_lat=None, gdf=None, nb_CPU=12):
+def compute_surface_ratios_wrinkles_filtergdf(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, input_with_gdf):
+
+    gdf, input = input_with_gdf
+    ratio_df = compute_surface_ratios_wrinkles_filtergdf(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, gdf, input)
+    return ratio_df
+
+def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, l_points, n_subshapes=None, surface1_lon=None, surface1_lat=None, gdf=None, filter_gdf_before_CPU=True, nb_CPU=12):
 
     if n_subshapes is None and gdf is None:
         print(f'Either provide shape file or TL subshapes')
@@ -764,14 +771,21 @@ def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_ma
 
     if n_subshapes is not None:
         n_subshapes = n_subshapes.reshape(surface1_lon.shape[1:])
+
     nb_chunks = l_points.shape[0]
-    partial_compute_scores = partial(compute_surface_ratios_wrinkles, lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, gdf)
+    if filter_gdf_before_CPU:
+        partial_compute_scores = partial(compute_surface_ratios_wrinkles_filtergdf, lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state)
+    else:
+        partial_compute_scores = partial(compute_surface_ratios_wrinkles, lon_0, l_radius, proj, polygon_map, polygon_region, subsample_db, buffer_line, threshold_neighbor_pts, random_state, gdf)
         
     N = min(nb_CPU, nb_chunks)
     ## If one CPU requested, no need for deployment
     if N == 1:
         print('Running serial')
-        ratio_df = partial_compute_scores( (0, l_points, surface1_lon, surface1_lat, n_subshapes) )
+        input_list = (0, l_points, surface1_lon, surface1_lat, n_subshapes)
+        if filter_gdf_before_CPU:
+            input_list = (gdf, input_list)
+        ratio_df = partial_compute_scores( input_list )
 
     ## Otherwise, we pool the processes
     else:
@@ -788,8 +802,10 @@ def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_ma
             input_list = (i, l_points[idx,:], None, None, None)
             if surface1_lon is not None:
                 input_list = (i, l_points[idx,:], surface1_lon[:, idx,:], surface1_lat[:, idx,:], n_subshapes[idx,:])
+            if filter_gdf_before_CPU:
+                input_list = (gdf.loc[gdf.iscenario.isin(idx)], input_list)
             list_of_lists.append( input_list )
-
+            
         with get_context("spawn").Pool(processes = N) as p:
             print(f'Running across {N} CPU')
             results = p.map(partial_compute_scores, list_of_lists)
