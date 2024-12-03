@@ -698,8 +698,10 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
         threshold_acceptable =  np.diff(l_radius)[0]/2.
         use_period = False
         if 'period' in gdf.columns:
-            use_period = True
             periods = gdf.period.unique()
+            if periods.size > 1:
+                use_period = True
+
         use_gdf = True
 
     ## polygon2 is a multipolygon
@@ -734,7 +736,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                         
                         poly = gdf.loc[(diff_lat==diff_lat.min())&(diff_lon==diff_lon.min())&(diff_dist==diff_dist.min())]
                         if use_period:
-                            diff_t = abs(gdf.period-period)
+                            diff_t = abs(poly.period-period)
                             poly = poly.loc[diff_t==diff_t.min()]
                         poly = poly.geometry.iloc[0]
                        
