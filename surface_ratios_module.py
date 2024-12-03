@@ -728,7 +728,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                     diff_lat = abs(gdf.lon-lon_0_current)
                     diff_lon = abs(gdf.lat-lat_0_current)
                     poly = gdf.loc[(diff_lat==diff_lat.min())&(diff_lon==diff_lon.min())]
-                    if poly.shape[0] > 0:
+                    if poly.shape[0] == 0:
                         print('Issue with poly location not found')
                         loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0.}
                         ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
