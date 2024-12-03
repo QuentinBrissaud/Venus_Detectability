@@ -23,7 +23,7 @@ def compute_surfaces_CPUs(thresholds, LATS, LONS, lats_stations, lons_stations, 
     ## If one CPU requested, no need for deployment
     if N == 1:
         print('Running serial')
-        gdf = partial_compute_surfaces((0, max_dist))
+        gdf = partial_compute_surfaces((0, idx_start_all, max_dist))
 
     ## Otherwise, we pool the processes
     else:
@@ -36,7 +36,7 @@ def compute_surfaces_CPUs(thresholds, LATS, LONS, lats_stations, lons_stations, 
             if i == N-1:
                 idx = np.arange(i*step_idx, nb_chunks)
             idxs.append(idx_start_all[idx][0])
-            list_of_lists.append( (i, max_dist[idx_start_all[idx],:]) )
+            list_of_lists.append( (i, idx_start_all[idx], max_dist[idx_start_all[idx],:]) )
 
         with get_context("spawn").Pool(processes = N) as p:
             print(f'Running across {N} CPU')
@@ -53,22 +53,23 @@ def compute_surfaces_CPUs(thresholds, LATS, LONS, lats_stations, lons_stations, 
 
 def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys, plot, R0, inputs):
 
-    debug = False
+    debug = True
 
-    iCPU, max_dist = inputs
+    iCPU, all_idx, max_dist = inputs
 
     proj = pyproj.Proj(proj='robin', lat_0=0., lon_0=0., a=R0, b=R0)
     x, y = proj(LONS, LATS)
 
     gdf = []
     #for iscenario in tqdm(range(500,503)):
-    for iscenario in tqdm(range(max_dist.shape[0]), disable=not iCPU == 0):
+    for iscenario_loc in tqdm(range(max_dist.shape[0]), disable=not iCPU == 0):
 
+        iscenario = all_idx[iscenario_loc]
         if debug:
             if not iscenario == 160:
                 continue
 
-        max_map = max_dist[iscenario,:]
+        max_map = max_dist[iscenario_loc,:]
 
         dict_scenario = dict(iscenario=iscenario)
         lats_loc = lats_stations[iscenario,:]
@@ -126,7 +127,10 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
                 x, y = proj(lons_stations[iscenario, :], lats_stations[iscenario, :])
                 ax.scatter(x, y, marker='x', s=100, color='red')
                 #ax.legend()
-                ax.set_title(threshold)
+                
+                ax.set_title(f'{threshold} - iscenario: {iscenario}')
+                print(f'Saving')
+                #plt.savefig(f'./test_threshold{cpt_threshold}_CPU{iCPU}_iscenario.png')
 
             first_pass_done = True
 
