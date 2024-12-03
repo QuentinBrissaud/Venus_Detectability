@@ -46,6 +46,8 @@ def compute_surfaces_CPUs(thresholds, LATS, LONS, lats_stations, lons_stations, 
 
         gdf = gpd.GeoDataFrame()
         for idx, gdf_loc in zip(idxs, gdfs):
+            if not 'iscenario' in gdf_loc.columns:
+                continue
             gdf_loc['iscenario'] += idx
             gdf = pd.concat([gdf, gdf_loc], ignore_index=True)
 
