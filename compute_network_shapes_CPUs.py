@@ -432,8 +432,11 @@ def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat,
         ind_without_airglow = np.setdiff1d(id_stat, np.array([which_stat_is_airglow]))
         only_airglow = False if ind_without_airglow.size > 0 else True
         ind_with_airglow = np.array([which_stat_is_airglow])
-
+   
     max_dist = np.zeros((lats_stations.shape[0], LONS.size))
+    if not type_detection == 'same_event':
+        max_dist += 1e6 # Taking the minimum requires large initial values of distances
+
     clusters = np.arange(0, lats_stations.shape[0]-1, s_cluster)
     for _, i_cluster in tqdm(enumerate(clusters), total=clusters.size):
         
@@ -444,7 +447,8 @@ def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat,
             id_ref_quake, all_id_scenarios, all_id_stat = id_ref_quake.ravel(), all_id_scenarios.ravel(), all_id_stat.ravel()
 
             max_dist_loc = haversine_distance(LONS[id_ref_quake], LATS[id_ref_quake], lons_stations[all_id_scenarios, all_id_stat].ravel(), lats_stations[all_id_scenarios, all_id_stat].ravel())
-            max_dist[inds_loc,:] = max_dist_loc.reshape(shape_init_ref).max(axis=-1)
+            #max_dist[inds_loc,:] = max_dist_loc.reshape(shape_init_ref).max(axis=-1)
+            max_dist[inds_loc,:] = type_operator(max_dist_loc.reshape(shape_init_ref), axis=-1)
 
         if use_airglow:
             id_ref_quake, all_id_scenarios, all_id_stat = np.meshgrid(np.arange(LONS.size), id_scenario[inds_loc], ind_with_airglow)
