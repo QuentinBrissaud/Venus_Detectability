@@ -84,7 +84,7 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
         first_pass_done = False
         threshold_offset = 80.
         cpt_threshold = 0
-        for ithreshold, threshold in enumerate(thresholds[:]):
+        for _, threshold in enumerate(thresholds[:]):
 
             #print(f'threshold {first_pass_done} - {threshold}')
             inds = np.where(max_map/1e3<=threshold+threshold_offset)[0] 
@@ -413,11 +413,18 @@ def compute_intersections(C1, L1, C2, L2):
 
     return intersection_centers, intersection_half_lengths
 
-def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat, s_cluster=100, use_airglow=False, which_stat_is_airglow=1, f_alt_scaling=None, lon_0_airglow=dict(nightglow=180., dayglow=0.), radius_airglow=dict(nightglow=60., dayglow=70.), radius_view=60., airglow_considered=['dayglow', 'nightglow']):
+def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat, s_cluster=100, use_airglow=False, which_stat_is_airglow=1, f_alt_scaling=None, lon_0_airglow=dict(nightglow=180., dayglow=0.), radius_airglow=dict(nightglow=60., dayglow=70.), radius_view=60., airglow_considered=['dayglow', 'nightglow'], type_detection='same_event'):
 
     if use_airglow and f_alt_scaling is None:
         print('ERROR: Cannot have airglow and not altitude scaling functional')
         return
+    
+    type_detections = ['same_event', 'any_event']
+    if not type_detection in type_detections:
+        print('type_detection not available, it should be in {type_detections}')
+        return
+    
+    type_operator = np.max if type_detection == 'same_event' else np.min
 
     ind_without_airglow = id_stat
     only_airglow = False
@@ -457,8 +464,9 @@ def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat,
                 max_dist_airglow[max_dist_airglow/1e3>19000.] = 19000.*1e3
                 max_dist_airglow_all = np.min(np.stack((max_dist_airglow_all, max_dist_airglow), axis=-1), axis=-1)
                 
-            max_dist_airglow_all = max_dist_airglow_all.reshape(shape_init_ref).max(axis=-1)
-            max_dist[inds_loc,:] = np.max(np.stack((max_dist[inds_loc,:], max_dist_airglow_all), axis=-1), axis=-1)
+            #max_dist_airglow_all = max_dist_airglow_all.reshape(shape_init_ref).max(axis=-1)
+            max_dist_airglow_all = type_operator(max_dist_airglow_all.reshape(shape_init_ref), axis=-1)
+            max_dist[inds_loc,:] = type_operator(np.stack((max_dist[inds_loc,:], max_dist_airglow_all), axis=-1), axis=-1)
 
     
     return max_dist
