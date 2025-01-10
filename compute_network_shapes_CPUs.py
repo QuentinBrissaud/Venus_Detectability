@@ -48,7 +48,7 @@ def compute_surfaces_CPUs(thresholds, LATS, LONS, lats_stations, lons_stations, 
         for idx, gdf_loc in zip(idxs, gdfs):
             if not 'iscenario' in gdf_loc.columns:
                 continue
-            gdf_loc['iscenario'] += idx
+            #gdf_loc['iscenario'] += idx
             gdf = pd.concat([gdf, gdf_loc], ignore_index=True)
 
     return gdf
@@ -84,7 +84,7 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
         first_pass_done = False
         threshold_offset = 80.
         cpt_threshold = 0
-        for _, threshold in enumerate(thresholds[:]):
+        for ithreshold, threshold in enumerate(thresholds[:]):
 
             #print(f'threshold {first_pass_done} - {threshold}')
             inds = np.where(max_map/1e3<=threshold+threshold_offset)[0] 
