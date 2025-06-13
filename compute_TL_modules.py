@@ -50,7 +50,7 @@ def prepare_mts(strikes):
         
     return types, mts
     
-def prepare_waveforms(dist, azimuths, ref_location, store_id):
+def prepare_waveforms(dist, azimuths, ref_location, store_id, displacement=False):
     
     azimuths_rad = np.radians(azimuths)
     id_dist, id_azimuths = np.arange(dist.size), np.arange(len(azimuths))
@@ -61,7 +61,7 @@ def prepare_waveforms(dist, azimuths, ref_location, store_id):
     
     waveform_targets = [
         gf.Target(
-            quantity='velocity',
+            quantity='displacement' if displacement else 'velocity',
             lat = ref_location[0],
             lon = ref_location[1],
             north_shift=north_shift,
@@ -74,18 +74,16 @@ def prepare_waveforms(dist, azimuths, ref_location, store_id):
     
     return waveform_targets, dist[id_dist], azimuths_rad[id_azimuths]
     
-def build_amps_and_traces(dists, depths, base_folder, store_id, f_targets, stf=None):
+def build_amps_and_traces(dists, depths, base_folder, store_id, f_targets, stf=None, displacement=False, delta_az=25.):
 
     engine = gf.LocalEngine(store_dirs=[f'{base_folder}{store_id}/'])
     store = engine.get_store(store_id)
     show_bounds(store)
     
     ref_location = [0., 0.]
-    
-    delta_az = 25.
     azimuths = np.arange(0., 360., delta_az)
     #azimuths = [0.]
-    waveform_targets, dists_waveform, az_waveform = prepare_waveforms(dists, azimuths, ref_location, store_id)
+    waveform_targets, dists_waveform, az_waveform = prepare_waveforms(dists, azimuths, ref_location, store_id, displacement=displacement)
     
     strikes = [0.]
     types, mts = prepare_mts(strikes)
@@ -97,8 +95,11 @@ def build_amps_and_traces(dists, depths, base_folder, store_id, f_targets, stf=N
     all_amps_RW = pd.DataFrame()
     all_amps_S = pd.DataFrame()
     #factor = 1.
+    ii = -1
     for id_mt, id_depth in tqdm(zip(id_mts, id_depths), total=id_depths.size):
         
+        ## dists_waveform[ii]
+        ii += 1
         mt = mts[id_mt]
         depth = depths[id_depth]
         type_mt = types[id_mt]
@@ -157,6 +158,13 @@ def build_amps_and_traces(dists, depths, base_folder, store_id, f_targets, stf=N
                 if len(f_targets_loc) > 1:
                     waveform_processed = filter_wave(waveform_processed, f_targets_loc[0], f_targets_loc[1], dt)
 
+                from pdb import set_trace as bp
+                plt.figure()
+                plt.plot(np.arange(waveform.get_ydata().size)*dt, waveform.get_ydata())
+                plt.plot(np.arange(0, waveform_processed.size)*dt, waveform_processed)
+                plt.savefig('./test.png')
+                bp()
+
                 max_RW = abs(waveform_processed).max()
                 amps_RW.append(max_RW)
                 if compute_S:
@@ -181,11 +189,11 @@ def build_amps_and_traces(dists, depths, base_folder, store_id, f_targets, stf=N
     
     return all_amps_RW, all_amps_S
 
-def get_all_amps(base_folder, stores_id, dists, depths, f_targets, stf):
+def get_all_amps(base_folder, stores_id, dists, depths, f_targets, stf, displacement):
 
     all_amps_RW, all_amps_S = pd.DataFrame(), pd.DataFrame()
     for istore, (store_id, dist) in enumerate(zip(stores_id, dists)):
-        all_amps_RW_loc, all_amps_S_loc = build_amps_and_traces(dist, depths, base_folder, store_id, f_targets, stf=stf)
+        all_amps_RW_loc, all_amps_S_loc = build_amps_and_traces(dist, depths, base_folder, store_id, f_targets, stf=stf, displacement=displacement)
         all_amps_RW_loc['store'] = store_id
         #all_amps_S_loc['store'] = store_id
         

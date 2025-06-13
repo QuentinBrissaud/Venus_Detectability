@@ -37,18 +37,20 @@ def compute_positions_vectorized_w_interpolator(lat0, lon0, wind_direction_inter
     
     # 
     # Compute positions for each time step
+    time_prev = times[0,0]
     for i, time in tqdm(enumerate(times[0,:]), total=times.shape[1]):
         
-        # Calculate the latitude-dependent latitude velocity
-        #vlat = vlat_func(np.degrees(lat_rad))
-        az = wind_direction_interpolator.ev(np.degrees(lat_rad), np.degrees(lon_rad))
-        w_strength = wind_direction_interpolator.ev(np.degrees(lat_rad), np.degrees(lon_rad))
-        vlon = np.cos(lon_rad)*w_strength
-        vlat = np.sin(lon_rad)*w_strength
-        
+        time_diff = time-time_prev
+        time_prev = time
+        az = np.radians(wind_direction_interpolator.ev(np.degrees(lat_rad), np.degrees(lon_rad)))
+
+        w_strength = wind_strength_interpolator.ev(np.degrees(lat_rad), np.degrees(lon_rad))
+        vlon = np.sin(az)*w_strength
+        vlat = np.cos(az)*w_strength
+
         # Calculate the distance traveled in latitude and longitude
-        dlat = vlat * time
-        dlon = vlon * time
+        dlat = vlat * time_diff
+        dlon = vlon * time_diff
         
         # Convert distances into angular displacements (in radians)
         delta_lat_rad = dlat / R0
@@ -204,7 +206,8 @@ def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., font
     time_collapse_seq_end = UTCDateTime('2018-08-05')
     time_cratercollapse_seq_start = UTCDateTime('2018-05-1')
     time_cratercollapse_seq_end = UTCDateTime('2018-05-04')
-    time_magma_start = UTCDateTime('2020-12-20')
+    #time_magma_start = UTCDateTime('2020-12-20')
+    time_magma_start = time_collapse_end
     time_maunaloa_seq_start = UTCDateTime('2022-11-27')
     time_maunaloa_seq_end = UTCDateTime('2022-12-13')
     mag_min_collapses = 4.8
@@ -214,10 +217,10 @@ def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., font
     catalog_hawai.loc[(catalog_hawai.UTC>=time_collapse.datetime)&(catalog_hawai.UTC<time_collapse_end.datetime), 'type_ev'] = 'Other during collapse'
     catalog_hawai.loc[(catalog_hawai.UTC>=time_collapse_seq_start.datetime)&(catalog_hawai.UTC<time_collapse_seq_end.datetime)&(catalog_hawai.mag>mag_min_collapses),'type_ev'] = 'Kilauea Collapse'
     catalog_hawai.loc[catalog_hawai.mag==catalog_hawai.mag.max(),'type_ev'] = 'Slumping'
-    catalog_hawai.loc[(catalog_hawai.UTC>=time_cratercollapse_seq_start.datetime)&(catalog_hawai.UTC<time_cratercollapse_seq_end.datetime),'type_ev'] = 'PuuOo crater collapse'
+    catalog_hawai.loc[(catalog_hawai.UTC>=time_cratercollapse_seq_start.datetime)&(catalog_hawai.UTC<time_cratercollapse_seq_end.datetime),'type_ev'] = 'Pu`u`O`o crater collapse'
     catalog_hawai.loc[catalog_hawai.UTC>=time_collapse_end.datetime, 'type_ev'] = 'Aftershocks collapse'
     catalog_hawai.loc[(catalog_hawai.UTC>=time_magma_start.datetime),'type_ev'] = 'Magma influx and small eruptions'
-    catalog_hawai.loc[(catalog_hawai.UTC>=time_maunaloa_seq_start.datetime)&(catalog_hawai.UTC<=time_maunaloa_seq_end.datetime),'type_ev'] = 'Manu Loa eruption'
+    catalog_hawai.loc[(catalog_hawai.UTC>=time_maunaloa_seq_start.datetime)&(catalog_hawai.UTC<=time_maunaloa_seq_end.datetime),'type_ev'] = 'Mauna Loa eruption'
     catalog_hawai['unique_id'] = pd.factorize(catalog_hawai['type_ev'])[0]
 
     #fig = plt.figure(figsize=(10,5))
@@ -227,17 +230,17 @@ def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., font
     catalog_hawai_before = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Low-level eruptive activity'])]
     plot_seq(ax_first, catalog_hawai_before, 'Reds', 'tab:red', type_ev='Low-level\neruptive activity', vmax=catalog_hawai.mag.max())
 
-    catalog_hawai_collapse = catalog_hawai.loc[~catalog_hawai.type_ev.isin(['Low-level eruptive activity', 'Aftershocks collapse', 'Magma influx and small eruptions', 'Manu Loa eruption'])]
+    catalog_hawai_collapse = catalog_hawai.loc[~catalog_hawai.type_ev.isin(['Low-level eruptive activity', 'Aftershocks collapse', 'Magma influx and small eruptions', 'Mauna Loa eruption'])]
     plot_seq(ax_first, catalog_hawai_collapse, 'Greens', 'tab:green', type_ev='', maxval_annot=5.5, str_annot='Kilauea\nCollapses', vmax=catalog_hawai.mag.max())
 
-    catalog_hawai_later = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Aftershocks collapse',])]
-    plot_seq(ax_first, catalog_hawai_later, 'Blues', 'tab:blue', type_ev='After\nshocks', xpad=-800., vmax=catalog_hawai.mag.max())
+    #catalog_hawai_later = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Aftershocks collapse',])]
+    #plot_seq(ax_first, catalog_hawai_later, 'Blues', 'tab:blue', type_ev='After\nshocks', xpad=-800., vmax=catalog_hawai.mag.max())
 
     catalog_hawai_magma = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Magma influx and small eruptions',])]
     plot_seq(ax_first, catalog_hawai_magma, 'Oranges', 'tab:orange', type_ev='Magma\ninflux', xpad=200., vmax=catalog_hawai.mag.max())
 
-    catalog_hawai_manuloa = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Manu Loa eruption',])]
-    plot_seq(ax_first, catalog_hawai_manuloa, 'Purples', 'tab:purple', type_ev='', maxval_annot=5., str_annot='Manu Loa\neruption', vmax=catalog_hawai.mag.max())
+    catalog_hawai_manuloa = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Mauna Loa eruption',])]
+    plot_seq(ax_first, catalog_hawai_manuloa, 'Purples', 'tab:purple', type_ev='', maxval_annot=5., str_annot='Mauna Loa\neruption', vmax=catalog_hawai.mag.max())
 
     ax_first.set_ylabel('Magnitude (Mw)', fontsize=fontsize, color=color_labels)
     ax_first.text(-0., 1., 'a)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax_first.transAxes)
@@ -263,13 +266,13 @@ def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., font
     sc = ax_zoom.scatter(catalog_loc.UTC, catalog_loc.mag, c='tab:blue', alpha=0.3, s=100, label=catalog_loc.iloc[0].type_ev)
     sc.set_edgecolor("none")
 
-    catalog_loc = catalog_hawai.loc[catalog_hawai.type_ev.isin(['PuuOo crater collapse'])]
+    catalog_loc = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Pu`u`O`o crater collapse'])]
     sc = ax_zoom.scatter(catalog_loc.UTC, catalog_loc.mag, c='tab:red', alpha=0.3, s=100, label=catalog_loc.iloc[0].type_ev)
     sc.set_edgecolor("none")
 
     ax_zoom.scatter(catalog_hawai_collapse.UTC, catalog_hawai_collapse.mag, c=catalog_hawai_collapse.unique_id, cmap='Greens', s=3)
 
-    catalog_loc = catalog_hawai.loc[catalog_hawai.type_ev.isin(['PuuOo crater collapse'])]
+    catalog_loc = catalog_hawai.loc[catalog_hawai.type_ev.isin(['Pu`u`O`o crater collapse'])]
     ax_zoom.scatter(catalog_loc.UTC, catalog_loc.mag, c='tab:green', alpha=0.3, cmap='Greens', s=3)
 
     ax_zoom.legend(frameon=False)
@@ -287,6 +290,105 @@ def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., font
         zorder=-100,  # Place it below all other elements
     )
     ax_zoom.add_patch(rect)
+
+def plot_proba_sequence_small(catalog_hawai, amps_ev, t0s_offset, LAT_offset_shape, mask, snrs, noise_level = 0.01, fontsize=12., number_over_snr=None, idamp=None, amps_ev_reshaped=None, color_labels='black', fontsize_label=20.):
+    
+    cmap = plt.cm.coolwarm  # define the colormap
+    cmaplist = [cmap(i) for i in range(cmap.N)]
+
+    if idamp is None:
+        idamp = (amps_ev*(mask)).argmax(axis=0)[None,:]  
+
+    if number_over_snr is None:
+        #snrs = np.arange(0.5, 5., 0.5)
+        number_over_snr = np.zeros((snrs.size,) + LAT_offset_shape)
+        for isnr,  snr in tqdm(enumerate(snrs), total=snrs.size):
+            number_over_snr[isnr,:] = ((amps_ev*(mask)/noise_level)>snr).sum(axis=0).reshape(LAT_offset_shape)
+
+    if amps_ev_reshaped is None:
+        amps_ev_reshaped = np.take_along_axis(amps_ev*(mask) + 1e-10*(~mask), idamp, axis=0)[0].reshape(LAT_offset_shape) # lon x lat x t0
+
+    fig = plt.figure(figsize=(10,6))
+    grid = fig.add_gridspec(2, 6)
+
+    ax_first = fig.add_subplot(grid[:1,:4])
+    ax_zoom = fig.add_subplot(grid[:1,4:], sharey=ax_first)
+
+    ## Plotting time distribution of events and labels
+    plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., fontsize=12., fontsize_label=20., color_labels=color_labels)
+
+    ## SNR total distribution
+    ax = fig.add_subplot(grid[1,4:],)
+    field = amps_ev_reshaped.ravel()/noise_level
+    bins_orig = np.logspace(np.log10(0.1),np.log10(10.), 50)
+    bins = np.r_[0, bins_orig, 100]
+    #bins = np.linspace(0.1,10., 50)
+    hist = ax.hist(field, bins=bins, log=True, density=True, orientation='horizontal')
+
+    vals = []
+    ax_proba = ax.twiny()
+    for threshold in hist[1][:-1]:
+        idx = hist[1][:-1] >= threshold
+        #integral = np.trapz(hist[0][idx], x=hist[1][:-1][idx])/np.trapz(hist[0][:], x=hist[1][:-1][:])
+        integral = np.trapz(hist[0][idx], x=hist[1][:-1][idx])/np.trapz(hist[0][:], x=hist[1][:-1][:])
+        vals.append( integral )
+    ax_proba.plot(vals, hist[1][:-1], color='tab:red', label='P(>SNR)')
+    #print(hist[0], hist[1])
+    ax_proba.legend(frameon=False)
+    ax_proba.set_xscale('log')
+    ax_proba.set_yscale('log')
+    ax_proba.tick_params(axis='x', labelcolor='tab:red')
+    ax_proba.set_xlabel('Probability', fontsize=fontsize, color='tab:red')
+    ax_proba.set_xlim([1e-2, 1e1])
+    ax_proba.tick_params(axis='both', labelsize=fontsize)
+    ax_proba.set_xticks([0.1, 0.5, ])
+    ax_proba.set_xticklabels([f'10%', f'50%',])
+    #ax.set_xlabel('SNR', fontsize=fontsize, color=color_labels)
+    ax.set_xlabel('Probability Density Function', fontsize=fontsize, color=color_labels)
+    ax.set_yscale('log')
+    ax.set_xlim([1e-3, 1])
+    ax.set_ylim([bins_orig.min(), bins_orig.max()])
+    ax.tick_params(axis='both', labelsize=fontsize, labelleft=False, colors=color_labels)
+    ax.text(-0., 1., 'd)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax.transAxes)
+
+    ##
+    ## Plotting number of events > SNR
+    ##
+    cmap = plt.cm.Greens  # define the colormap
+    cmaplist = [cmap(i) for i in range(cmap.N)]
+    #cmaplist[0] = (.5, .5, .5, 1.0) # force the first color entry to be grey
+    cmap = colors.LinearSegmentedColormap.from_list('Custom cmap', cmaplist, cmap.N)
+
+    # define the bins and normalize
+    bounds = np.arange(7)
+    norm = colors.BoundaryNorm(bounds, cmap.N)
+
+    from matplotlib.colors import TwoSlopeNorm
+
+    number_over_snr_mean = np.mean(number_over_snr, axis=(1,2))
+    cmap = plt.cm.coolwarm
+    norm = TwoSlopeNorm(vmin=number_over_snr_mean.min(), vmax=2., vcenter=1.)  # Midpoint at 0
+    datetimes = [catalog_hawai.UTC.min() + pd.Timedelta(days=year * 365.25) for year in t0s_offset]
+    ax = fig.add_subplot(grid[1,:4], sharex=ax_first, sharey=ax)
+    sc = ax.pcolormesh(datetimes, snrs, number_over_snr_mean, cmap=cmap, norm=norm)
+    add_cbar(ax, sc, f'Average number of events detected', fontsize=fontsize, color=color_labels)
+    ax.set_ylabel(f'SNR', fontsize=fontsize, color=color_labels)
+    ax.tick_params(axis='both', labelsize=fontsize, colors=color_labels)
+    ax.xaxis_date()
+    ax.text(-0., 1., 'c)', fontsize=fontsize_label, ha='left', va='bottom', transform=ax.transAxes)
+    rect = plt.Rectangle(
+        (0, 0), 1, 1,
+        transform=ax.transAxes,  # Use axes coordinates
+        color='white',
+        zorder=-100,  # Place it below all other elements
+    )
+    ax.add_patch(rect)
+
+    fig.align_ylabels()
+    fig.align_xlabels()
+    fig.subplots_adjust(hspace=0.7, wspace=0.3)
+
+    return fig
 
 def plot_proba_sequence(catalog_hawai, amps_ev, all_times, all_mags, TL_new, lat_vol, t0s_offset, lat_offset, LAT_offset_shape, mask, noise_level = 0.01, factor = (np.log10(2.)+4.)/4., snr_threshold=1, plot_SNR_distrib=True, fontsize=12., number_over_snr=None, amps_ev_reshaped=None, color_labels='black'):
 

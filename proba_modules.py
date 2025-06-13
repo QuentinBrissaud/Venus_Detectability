@@ -398,8 +398,8 @@ def get_TL_curves_one_freq(pd_all_amps_in, freq, dist_min, rho0, rhob, cb, use_s
 
     pd_all_amps = pd_all_amps_in.copy()
     if 'fmax' in pd_all_amps.columns:
-        diff = abs(pd_all_amps.fmax-freq)
-        pd_all_amps = pd_all_amps.loc[diff==diff.min()]
+        diff = (freq>=pd_all_amps.fmin) & (freq<=pd_all_amps.fmax) & ~((pd_all_amps.fmin==0.)&(pd_all_amps.fmax==1.)) # Remove the full spectrum case
+        pd_all_amps = pd_all_amps.loc[diff]
         
     if 'median_rw' in pd_all_amps.columns:
         x = pd_all_amps.dist.values/1e3
@@ -455,11 +455,10 @@ def get_TL_curves_one_freq(pd_all_amps_in, freq, dist_min, rho0, rhob, cb, use_s
     TL_base_seismic = lambda dist, m0: 1e-6*TL_base_seismic_disp(dist, m0)*2*np.pi/period
     """
 
+    density_ratio = np.sqrt(rho0/(rhob))
     if unknown == 'pressure':
-        density_ratio = rhob*cb*np.sqrt(rho0/(rhob))
-    else:
-        density_ratio = np.sqrt(rho0/(rhob))
-
+        density_ratio *= rhob*cb
+        
     #TL_base = lambda dist, m0: density_ratio*(TL_base_seismic(dist,m0)*1e-6)/(2*np.pi*period) # Raphael
     TL_base = lambda dist, m0: density_ratio*(TL_base_seismic(dist,m0))
     TL_base_qmin = lambda dist, m0: density_ratio*(TL_base_seismic_qmin(dist,m0))
@@ -501,11 +500,119 @@ def get_TL_curves(file_curve, freq, dist_min = 100., rho0=50., rhob=1., cb=250.,
     else:
         return TL_new, TL_new_qmin, TL_new_qmax
 
+def return_one_interp(TL, density_ratio, amp_scaling):
+
+    f_mean = interpolate.interp1d(TL.distance.values, TL.amp_median.values, bounds_error=False, fill_value=(TL.amp_median.values[0], TL.amp_median.values[-1]))
+    f_qmin = interpolate.interp1d(TL.distance.values, TL.amp_qmin.values, bounds_error=False, fill_value=(TL.amp_qmin.values[0], TL.amp_qmin.values[-1]))
+    f_qmax = interpolate.interp1d(TL.distance.values, TL.amp_qmax.values, bounds_error=False, fill_value=(TL.amp_qmax.values[0], TL.amp_qmax.values[-1]))
+
+    TL_new = lambda dist, m0: density_ratio*pmt.magnitude_to_moment(m0)*f_mean(dist)/amp_scaling
+    TL_new_qmin = lambda dist, m0: density_ratio*pmt.magnitude_to_moment(m0)*f_qmin(dist)/amp_scaling
+    TL_new_qmax = lambda dist, m0: density_ratio*pmt.magnitude_to_moment(m0)*f_qmax(dist)/amp_scaling
+
+    return TL_new, TL_new_qmin, TL_new_qmax
+
+def get_TL_curves_precomputed(file_curve, rho0=50., rhob=1., cb=250., unknown='pressure', model='Cold100'):
+
+    TL_all = pd.read_csv(file_curve, header=[0])
+    comp = 'v' if unknown in ['pressure', 'velocity'] else 'u'
+    TL_all = TL_all.loc[(TL_all.model == model)&(TL_all.comp == comp)]
+    m0_default = TL_all.m0_default.iloc[0]
+    amp_scaling = pmt.magnitude_to_moment(m0_default)
+
+    density_ratio = np.sqrt(rho0/(rhob))
+    if unknown == 'pressure':
+        density_ratio *= rhob*cb
+
+    TL_new, TL_new_qmin, TL_new_qmax = dict(), dict(), dict()
+    for one_freq, TL in TL_all.groupby('freq'):
+
+        TL_new_loc, TL_new_qmin_loc, TL_new_qmax_loc = return_one_interp(TL, density_ratio, amp_scaling)
+
+        TL_new[one_freq] = TL_new_loc
+        TL_new_qmin[one_freq] = TL_new_qmin_loc
+        TL_new_qmax[one_freq] = TL_new_qmax_loc
+
+    return TL_new, TL_new_qmin, TL_new_qmax
+
 def get_surface_ratios(file_ratio):
     surface_ratios = pd.read_csv(file_ratio)
     surface_ratios.loc[surface_ratios.radius==surface_ratios.radius.min(), 'ratio_map'] = 0.
     surface_ratios.loc[surface_ratios.radius==surface_ratios.radius.min(), 'ratio'] = 0.
     return surface_ratios
+
+#################################
+## CORNER FREQUENCY CORRECTION ##
+#################################
+
+def corner_frequency(mw, delta_sigma, Vs, Cs=0.32):
+    """
+    Compute the corner frequency (f_c) given moment magnitude (Mw), stress drop (Δσ), 
+    shear wave velocity (Vs), and constant Cs.
+
+    e.g., https://doi.org/10.1785/0120240001
+    
+    Parameters:
+        mw (float or array): Moment magnitude (Mw).
+        delta_sigma (float): Stress drop (MPa).
+        Vs (float): Shear wave velocity (m/s).
+        Cs (float): Scaling constant (default=0.32 for shear waves).
+    
+    Returns:
+        float or array: Corner frequency (Hz).
+
+    """
+    # Convert stress drop from MPa to Pascals (Pa)
+    delta_sigma *= 1e6
+    
+    # Compute seismic moment M0 in Nm (N·m) from magnitude Mw
+    M0 = 10**(1.5 * mw + 9.1)  # Seismic moment in Nm
+    
+    # Compute source radius r (m)
+    r = ((7 * M0) / (16 * delta_sigma))**(1/3)
+    
+    # Compute corner frequency (Hz)
+    fc = Cs * Vs / r
+    
+    return fc
+
+def brune_spectrum(f, fc, n=1.6, gamma=1.):
+    """
+    Compute Brune's spectral model.
+    """
+    return 1. / (1 + (f / fc) ** n) ** gamma
+
+import scipy.fftpack as fft_loc
+def convolve_signal_with_spectrum(signal_ts, dt, fc):
+    """
+    Convolve a Dirac-source-generated time series signal with Brune's spectrum.
+    
+    Parameters:
+        signal_ts (array): Time series signal.
+        dt (float): Time step (s).
+        fc (float): Corner frequency (Hz).
+        M0 (float): Seismic moment (Nm).
+    
+    Returns:
+        array: Convolved time series.
+    """
+    # Compute frequency domain representation
+    n = len(signal_ts)
+    freqs = fft_loc.fftfreq(n, dt)
+    
+    # Compute Brune's spectral shape
+    spectrum = brune_spectrum(np.abs(freqs), fc)
+    
+    # FFT of the input signal
+    signal_fft = fft_loc.fft(signal_ts)
+    
+    # Convolve in frequency domain (multiplication)
+    convolved_fft = signal_fft * spectrum
+    
+    # Inverse FFT to get time-domain signal
+    convolved_signal = fft_loc.ifft(convolved_fft).real
+    
+    return convolved_signal
 
 #######################
 ## PROBA CLASS MODEL ##
@@ -513,13 +620,14 @@ def get_surface_ratios(file_ratio):
 
 class proba_model:
 
-    def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax):
+    def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax, apply_fc_correction=None):
         
         self.pd_slopes = pd_slopes
         self.surface_ratios = surface_ratios
         self.TL = TL
         self.TL_qmin = TL_qmin
         self.TL_qmax = TL_qmax
+        self.apply_fc_correction = apply_fc_correction
 
     @staticmethod
     def return_number_per_cat_and_setting(mw, pd_slopes, cat_quake, setting):
@@ -576,6 +684,16 @@ class proba_model:
         mu = self.TL(x, MAG_r[:,:,0:1,0])/self.noise_level
         sigma_qmax = self.TL_qmax(x, MAG_r[:,:,0:1,0])/self.noise_level
         sigma_qmin = self.TL_qmin(x, MAG_r[:,:,0:1,0])/self.noise_level
+
+        if self.apply_fc_correction is not None:
+            delta_sigma = 3. # Stress drop (MPa)
+            Vs = 3500. # shear wave velocity (m/s)
+            n = 2. # Fall off rate
+            FC = corner_frequency(MAG_r[:,:,0:1,0], delta_sigma, Vs, Cs=0.32)
+            COEFS_BRUNE = brune_spectrum(self.apply_fc_correction, FC, n=n)
+            mu *= COEFS_BRUNE
+            sigma_qmax *= COEFS_BRUNE
+            sigma_qmin *= COEFS_BRUNE
         
         total_pdf = np.zeros(self.shape_init)
         cums_max = 1-0.5*(1+special.erf( (DETECT_T_r[0:1,0:1,:,0]-mu)/(sigma_qmax*np.sqrt(2.)) ))
@@ -591,6 +709,8 @@ class proba_model:
         total_pdf = self.compute_cum_pdf(DISTS, MAG, DETECT_T)
         
         integrated = {}
+        #print(RATIOs.keys())
+        #print(F_MAGS.keys())
         for region in RATIOs:
             integrated[region] = (F_MAGS[region]*RATIOs[region]*total_pdf).reshape(self.shape_init).sum(axis=(0,1)) 
             
@@ -1134,10 +1254,10 @@ def extract_coords(gdf):
             points.extend(list(geom.coords))
     return points
 
-def plot_regions(m, ax, VENUS, use_active_corona=False, plot_lines=True):
+def plot_regions(m, ax, VENUS, fontsize=None, use_active_corona=False, plot_lines=True, basedir='/staff/quentin/Documents/Projects/2024_Venus_Detectability/Venus_Detectability/data/'):
 
     if use_active_corona:
-        active_corona = gpd.read_file(f"./data/active_corona_shape/active_corona.shp").iloc[0].geometry
+        active_corona = gpd.read_file(f"{basedir}/active_corona_shape/active_corona.shp").iloc[0].geometry
 
     color_dict = {'corona': 'tab:red', 'rift': 'tab:green', 'ridge': 'tab:blue', 'intraplate': 'white', 'wrinkles': 'tab:green'}
     for region in VENUS:
@@ -1199,14 +1319,20 @@ def plot_regions(m, ax, VENUS, use_active_corona=False, plot_lines=True):
                     draw_screen_poly(coords, ax, legend, color=color_dict[region])
                 
     #if not region == 'wrinkles':
-    change_label = {'wrinkles': 'Wrinkle Ridges', 'corona': 'Coronae', 'ridge': 'Ridges', 'rift': 'Rifts'}
+    if fontsize is None:
+        fontsize = 10.
+    change_label = {'wrinkles': 'Wrinkle Ridges', 'corona': 'Selected\ncoronae', 'ridge': 'Fold belts', 'rift': 'Rifts'}
     patches = [mpatches.Patch(facecolor=color_dict[region], label=change_label[region], alpha=0.5, edgecolor='black') for region in VENUS]
     if 'ridge' in VENUS: ## Add intraplate
         patches += [mpatches.Patch(facecolor='white', label='Intraplate', alpha=0.5, edgecolor='black')]
-    ax.legend(handles=patches, frameon=False, bbox_to_anchor=(1.1, -0.1), ncol=4, bbox_transform=ax.transAxes)
+        bbox_to_anchor=(1.1, -0.1)
+        ax.legend(handles=patches, frameon=False, bbox_to_anchor=bbox_to_anchor, ncol=4, bbox_transform=ax.transAxes, fontsize=fontsize-4., columnspacing=0.2)
+    else:
+        bbox_to_anchor=(0.7, -0.1)
+        ax.legend(handles=patches, frameon=False, bbox_to_anchor=bbox_to_anchor, ncol=4, bbox_transform=ax.transAxes, fontsize=fontsize-4., columnspacing=0.2)
     if plot_lines:
-        m.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=10)
-        m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=10)
+        m.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=fontsize)
+        m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=fontsize)
     
 def interpolate_2d(current_map, lons_in, lats, toplot_in, dnew=1.):
 
@@ -1406,12 +1532,14 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     lats, lons = proba_model.all_lats, proba_model.all_lons
     
     fig = plt.figure(figsize=(14,8))
-    grid = fig.add_gridspec(2, 2)
+    grid = fig.add_gridspec(2, 6)
+    s_maps = 3
+    s_plots = 3
         
-    ax = fig.add_subplot(grid[1, 1])
-    ax_winds = fig.add_subplot(grid[0, 1])
-    ax_vs_time = fig.add_subplot(grid[1, 0])
-    ax_vs_lon = fig.add_subplot(grid[0, 0], sharex=ax_vs_time)
+    ax = fig.add_subplot(grid[1, -s_maps:])
+    ax_winds = fig.add_subplot(grid[0, -s_maps:])
+    ax_vs_time = fig.add_subplot(grid[1, :s_plots])
+    ax_vs_lon = fig.add_subplot(grid[0, :s_plots], sharex=ax_vs_time)
     
     iseismicity = -1
     linestyles = ['-', '--', ':']
@@ -1428,13 +1556,14 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
             
             if VENUS is None:
                 
-                fmt = lambda x, pos: '{:.2f} %'.format(x*1e2)
+                fmt = lambda x, pos: '{:.4f} %'.format(x*1e2)
                 idx_snr = np.argmin(abs(proba_model.SNR_thresholds-snr))
                 x, y, toplot, _, _ = interpolate_2d(m, proba_model.all_lons, proba_model.all_lats, proba_model.proba_all[idx_snr,:,:], dnew=1.)
                 cmap_bounds = np.linspace(toplot.min(), toplot.max(), n_colors_proba)
                 cmap_p = cm.get_cmap("Reds", lut=len(cmap_bounds))
                 norm = mcol.BoundaryNorm(cmap_bounds, cmap_p.N)
                 sc_proba = m.pcolormesh(x, y, toplot, zorder=0, cmap=cmap_p, norm=norm)
+                sc_proba.set_rasterized(True)
                 m.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=12)
                 m.drawparallels(np.linspace(-90., 90., 5), labels=[1, 0, 0, 0], fontsize=12)
                 add_vertical_cbar(fig, ax, sc_proba, cmap_bounds, fmt, c_cbar, 'Hourly probability') 
@@ -1453,6 +1582,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
                 cmap_w = cm.get_cmap("Greens", lut=len(cmap_bounds))
                 norm = mcol.BoundaryNorm(cmap_bounds, cmap_w.N)
                 sc_winds = m_winds.pcolormesh(x, y, winds_grp[unknown].values.reshape(lat_size, lon_size), norm=norm, cmap=cmap_w, alpha=0.8, zorder=5)
+                sc_winds.set_rasterized(True)
                 add_vertical_cbar(fig, ax_winds, sc_winds, cmap_bounds, fmt, c_cbar, 'Wind direction')    
 
                 m_winds.drawmeridians(np.linspace(-180., 180., 5), labels=[0, 0, 0, 1], fontsize=12)
@@ -1466,7 +1596,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
         isnr = -1
         for snr, new_trajectories_snr in new_trajectories.groupby('snr'):
             isnr += 1
-            line, = ax_vs_time.plot(new_trajectories_snr.time/(24*3600.), 1e2*new_trajectories_snr.proba, color=cmap[isnr], label=snr, linestyle=linestyles[iseismicity])
+            line, = ax_vs_time.plot(new_trajectories_snr.time/(24*3600.), 1e2*new_trajectories_snr.proba, color=cmap[isnr], label=f'{snr:.0f}', linestyle=linestyles[iseismicity])
             if iseismicity == 0:
                 lines_snr.append(line)
             line, = ax_vs_time.plot(new_trajectories_snr.time/(24*3600.), 1e2*new_trajectories_snr.proba, color=cmap[isnr], label=seismicity, linestyle=linestyles[iseismicity])
@@ -1475,15 +1605,22 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
             
     ax_vs_lon.plot(new_trajectories_snr.time/(24*3600.), new_trajectories_snr.lon, label='longitude', color='black')
     ax_vs_lon.plot([0., 0.], [0., 0.], label='latitude', color='tab:red')
-    ax_vs_lon.legend(loc='upper left', frameon=False, labelcolor=c_cbar, fontsize=fontsize)
     ax_vs_lon.set_ylabel('Longitude', color=c_cbar, fontsize=fontsize)
+    #ax_vs_lon.patch.set_alpha(0.0)
+    #legend_ax_vs_lon = ax_vs_lon.legend(loc='upper left', labelcolor=c_cbar, fontsize=fontsize, frameon=True, facecolor='white', framealpha=0.8, edgecolor='none')
+    #legend_ax_vs_lon.set_zorder(1000)
     ax_vs_lat = ax_vs_lon.twinx()  # instantiate a second Axes that shares the same x-axis
+    #ax_vs_lat.set_zorder(ax_vs_lon.get_zorder() - 1)
     ax_vs_lat.plot(new_trajectories_snr.time/(24*3600.), new_trajectories_snr.lat, label='latitude', color='tab:red')
     ax_vs_lat.grid(alpha=0.4)
-    ax_vs_lon.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
-    ax_vs_lat.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
+    ax_vs_lon.tick_params(axis='both', colors=c_cbar, labelsize=fontsize-2.)
+    ax_vs_lat.tick_params(axis='both', colors=c_cbar, labelsize=fontsize-2.)
     ax_vs_lat.set_ylabel('Latitude', fontsize=fontsize, color='tab:red')
     ax_vs_lat.tick_params(axis='y', labelcolor='tab:red')
+
+    handles, labels = ax_vs_lon.get_legend_handles_labels()
+    ax_vs_lat.legend(handles, labels, loc='upper left', labelcolor=c_cbar, fontsize=fontsize-2., frameon=True, facecolor='white', framealpha=0.8, edgecolor='none')
+
     rect = plt.Rectangle(
         (0, 0), 1, 1,
         transform=ax_vs_lon.transAxes,  # Use axes coordinates
@@ -1496,8 +1633,11 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     ax_vs_time_x = ax_vs_time.twinx()
     ax_vs_time_x.plot(new_trajectories_snr.time.iloc[:-1]/(24*3600.), 1e2*np.diff(new_trajectories_snr.proba), color='tab:blue')
     ax_vs_time_x.set_ylabel('Derivative $\partial_t\mathbb{P}$', color='tab:blue', fontsize=fontsize)
-    ax_vs_time_x.tick_params(axis='both', right=False, labelright=False)
-    
+    #ax_vs_time_x.tick_params(axis='both', right=False, labelright=False)
+
+    import matplotlib.ticker as ticker
+    ax_vs_time_x.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.1e'))
+    ax_vs_time_x.tick_params(axis='both', labelcolor='tab:blue', labelsize=fontsize-2.)
 
     ax_vs_time.set_ylabel('Detection probability $\mathbb{P}$ (%)', color=c_cbar, fontsize=fontsize)
     ax_vs_time.set_xlabel('Time (days)', color=c_cbar, fontsize=fontsize)
@@ -1513,7 +1653,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     ax_vs_time.add_patch(rect)
     
     # Creating the first legend
-    first_legend = ax_vs_time.legend(handles=lines_snr, loc='upper left', title='SNR', frameon=False, labelcolor=c_cbar, fontsize=fontsize)
+    first_legend = ax_vs_time_x.legend(handles=lines_snr, loc='upper left', title='SNR', labelcolor=c_cbar, fontsize=fontsize-2., frameon=True, facecolor='white', framealpha=0.8, edgecolor='none')
     #ax_vs_time.legend(handles=first_legend.legendHandles, labels=[text.get_text() for text in first_legend.get_texts()], loc='upper left', title='SNR')
 
     # Creating and adding the second legend
@@ -1524,7 +1664,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
         ax_vs_time.patch.set_alpha(0.5)
         plt.setp(second_legend.get_title(), color=c_cbar, fontsize=fontsize)
     
-    ax_vs_time.tick_params(axis='both', colors=c_cbar, labelsize=fontsize)
+    ax_vs_time.tick_params(axis='both', colors=c_cbar, labelsize=fontsize-2.)
     plt.setp(first_legend.get_title(), color=c_cbar, fontsize=fontsize)
     
     fontsize_label = 20.
@@ -1534,7 +1674,7 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
     ax.text(-0.1, 1., 'd)', fontsize=fontsize_label, ha='right', va='bottom', transform=ax.transAxes)
     
     fig.align_ylabels() 
-    fig.subplots_adjust(wspace=0.15, bottom=0.2, top=0.8)
+    fig.subplots_adjust(wspace=1.9, hspace=0.3, bottom=0.2, top=0.8)
     fig.patch.set_alpha(0.)
     if file is not None:
         fig.savefig(file, transparent=True)
