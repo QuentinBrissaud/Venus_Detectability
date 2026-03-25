@@ -308,7 +308,7 @@ def plot_sequence_events(fig, ax_first, ax_zoom, catalog_hawai, max_val=7., font
     )
     ax_zoom.add_patch(rect)
 
-def plot_proba_sequence_small(catalog_hawai, amps_ev, t0s_offset, LAT_offset_shape, mask, snrs, noise_level = 0.01, fontsize=12., number_over_snr=None, idamp=None, amps_ev_reshaped=None, color_labels='black', fontsize_label=20.):
+def plot_proba_sequence_small(catalog_hawai, amps_ev, t0s_offset, LAT_offset_shape, mask, snrs, noise_level = 0.01, fontsize=12., number_over_snr=None, idamp=None, amps_ev_reshaped=None, color_labels='black', fontsize_label=20., file=None):
     
     cmap = plt.cm.coolwarm  # define the colormap
     cmaplist = [cmap(i) for i in range(cmap.N)]
@@ -404,6 +404,9 @@ def plot_proba_sequence_small(catalog_hawai, amps_ev, t0s_offset, LAT_offset_sha
     fig.align_ylabels()
     fig.align_xlabels()
     fig.subplots_adjust(hspace=0.7, wspace=0.3)
+
+    if file is not None:
+        fig.savefig(file)
 
     return fig
 

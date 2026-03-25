@@ -696,6 +696,7 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
     periods = [0.]
     if gdf is not None:
         threshold_acceptable =  np.diff(l_radius)[0]/2.
+        threshold_acceptable_time = 0.01
         use_period = False
         if 'period' in gdf.columns:
             periods = gdf.period.unique()
@@ -712,6 +713,9 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
 
     ratio_df = pd.DataFrame()
     for iloc, (lon_0_current, lat_0_current) in tqdm(enumerate(l_points), total=l_points.shape[0], disable=not i_cpu==0):
+
+        #if iloc != 16:
+        #    continue
     
         for period in periods:
 
@@ -721,7 +725,6 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
 
                 #if iradius > 5:
                 #    continue
-
                 if use_gdf: ## We already computed the shapes
                     #diff_lat = abs(gdf.lon_statio-lon_0_current)
                     #diff_lon = abs(gdf.lat_statio-lat_0_current)
@@ -730,12 +733,12 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                     poly = gdf.loc[(diff_lat==diff_lat.min())&(diff_lon==diff_lon.min())]
                     if poly.shape[0] == 0:
                         print('Issue with poly location not found')
-                        loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0.}
+                        loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0., 'period': period}
                         ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
                         continue
                     diff_dist = abs(poly['distance']*1e3-radius)
                     if diff_dist.min() > threshold_acceptable: ## In case where there is no distance close to radius, i.e., no stations close enough to the source for a network for example we give a zero radius
-                        loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0.}
+                        loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0., 'period': period}
                         ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
                         continue
                     else:
@@ -743,6 +746,10 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                         poly = poly.loc[diff_dist==diff_dist.min()]
                         if use_period:
                             diff_t = abs(poly.period-period)
+                            if diff_t.min() > threshold_acceptable_time: ## In case where there is no distance close to radius, i.e., no stations close enough to the source for a network for example we give a zero radius
+                                loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': 0., 'ratio_map': 0., 'period': period}
+                                ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
+                                continue
                             poly = poly.loc[diff_t==diff_t.min()]
                         poly = poly.geometry.iloc[0]
                        
@@ -761,9 +768,12 @@ def compute_surface_ratios_wrinkles(lon_0, l_radius, proj, polygon_map, polygon_
                 
                 ratio = compute_surface_area_ratio(intersection, polygon_map)
                 ratio_map = compute_surface_area_ratio(intersection, polygon_region)
+
                 loc_dict = {'iloc': iloc, 'lon': lon_0_current, 'lat': lat_0_current, 'iradius': iradius, 'radius': radius, 'ratio': ratio, 'ratio_map': ratio_map, 'period': period}
                 ratio_df = pd.concat([ratio_df, pd.DataFrame([loc_dict])])
- 
+
+            #bp()
+
     ratio_df.reset_index(drop=True, inplace=True)
     return ratio_df
 
@@ -830,12 +840,18 @@ def compute_surface_ratios_wrinkles_across_CPU(lon_0, l_radius, proj, polygon_ma
         for idx, result in zip(idxs, results):
             ratio_df = pd.concat([ratio_df, result])
 
+        #[group.index for iloc, (_, group) in enumerate(ratio_df.groupby(['lon', 'lat']))]
+        #bp()
+
+    ratio_df.reset_index(drop=True, inplace=True)
+
     iloc = -1
     for _, group in ratio_df.groupby(['lon', 'lat']):
         iloc += 1
         ratio_df.loc[ratio_df.index.isin(group.index), 'iloc'] = iloc
 
     ratio_df.reset_index(drop=True, inplace=True)
+    
     return ratio_df
 
 def compute_coordinates_TL_one_cluster_network(l_radius, num_points, lon_0, lat_0, R0, threshold, s_cluster, input):

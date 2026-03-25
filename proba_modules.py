@@ -470,7 +470,7 @@ def get_TL_curves_one_freq(pd_all_amps_in, freq, dist_min, rho0, rhob, cb, use_s
 
     return TL_new, TL_new_qmin, TL_new_qmax
 
-def get_TL_curves(file_curve, freq, dist_min = 100., rho0=50., rhob=1., cb=250., use_savgol_filter=False, plot=False, scalar_moment=1, unknown='pressure', return_dataframe=False):
+def get_TL_curves(file_curve, freq, depths=[0, 50], dist_min = 100., rho0=50., rhob=1., cb=250., use_savgol_filter=False, plot=False, scalar_moment=1, unknown='pressure', return_dataframe=False):
 
     only_one_TL = False
     if isinstance(freq, float):
@@ -481,6 +481,7 @@ def get_TL_curves(file_curve, freq, dist_min = 100., rho0=50., rhob=1., cb=250.,
         return None, None, None
 
     pd_all_amps = pd.read_csv(file_curve, header=[0])
+    pd_all_amps = pd_all_amps.loc[(pd_all_amps.depth>=depths[0]*1e3)&(pd_all_amps.depth<=depths[1]*1e3)]
     
     TL_new, TL_new_qmin, TL_new_qmax = dict(), dict(), dict()
     for one_freq in freq:
@@ -500,6 +501,106 @@ def get_TL_curves(file_curve, freq, dist_min = 100., rho0=50., rhob=1., cb=250.,
     else:
         return TL_new, TL_new_qmin, TL_new_qmax
 
+from scipy.stats import lognorm
+def get_lognormal_one_freq(pd_all_amps_in, freq, dist_min, rho0, rhob, cb, use_savgol_filter, scalar_moment, unknown, factor_lower_shape):
+
+    pd_all_amps = pd_all_amps_in.copy()
+    if 'fmax' in pd_all_amps.columns:
+        diff = (freq>=pd_all_amps.fmin) & (freq<=pd_all_amps.fmax) & ~((pd_all_amps.fmin==0.)&(pd_all_amps.fmax==1.)) # Remove the full spectrum case
+        pd_all_amps = pd_all_amps.loc[diff]
+
+    xloc = pd_all_amps.dist.unique()
+    x, shape, scale = np.zeros(xloc.size), np.zeros(xloc.size), np.zeros(xloc.size)
+    idist = -1
+    for dist, pd_all_amps_dist in pd_all_amps.groupby('dist'):
+        idist += 1
+        s1, _, c1 = lognorm.fit( pd_all_amps_dist.amp_RW.values, floc=0)
+        shape[idist] = s1/factor_lower_shape
+        scale[idist] = c1
+        x[idist] = dist/1e3
+
+        if False:
+            Y = lognorm(s=s1, loc=0., scale=c1)
+            x = np.logspace(np.log10(pd_all_amps_dist.amp_RW.values.min()), np.log10(pd_all_amps_dist.amp_RW.values.max()), 20)
+            plt.figure()
+            plt.hist(pd_all_amps_dist.amp_RW.values, bins=x)
+            #plt.plot(x, Y.pdf(x))
+            plt.xscale('log')
+            plt.yscale('log')
+            plt.title(f'{freq}Hz - {dist}')
+            break
+
+    scale /= scalar_moment
+
+    if use_savgol_filter:
+        
+        fs = []
+        for y in [shape, scale,]:
+            y_smooth = np.zeros_like(y)
+            window_size = 5  # Must be odd
+            poly_order = 3
+            y_smooth[:] = savgol_filter(y[:], window_size, poly_order)
+            f = interpolate.interp1d(x, y_smooth, bounds_error=False, fill_value=(y_smooth[0], y_smooth[-1]))
+            fs.append(f)
+
+        f_shape = fs[0]
+        f_scale = fs[1]
+    
+    else:
+        ## Rayleigh waves
+        f_shape = interpolate.interp1d(x, shape, bounds_error=False, fill_value=(shape[0], shape[-1]))
+        f_scale = interpolate.interp1d(x, scale, bounds_error=False, fill_value=(scale[0], scale[-1]))
+
+    shape_base_seismic = lambda dist: f_shape(dist)
+    scale_base_seismic = lambda dist, m0: pmt.magnitude_to_moment(m0)*f_scale(dist)
+
+    density_ratio = np.sqrt(rho0/(rhob))
+    if unknown == 'pressure':
+        density_ratio *= rhob*cb
+        
+    #TL_base = lambda dist, m0: density_ratio*(TL_base_seismic(dist,m0)*1e-6)/(2*np.pi*period) # Raphael
+    #shape_base = lambda dist, m0: density_ratio*(shape_base_seismic(dist,m0))
+    scale_base = lambda dist, m0: density_ratio*(scale_base_seismic(dist,m0))
+    
+    shape_new = lambda dist: shape_base_seismic(dist)*(dist>=dist_min) + shape_base_seismic(dist_min)*(dist<dist_min)
+    scale_new = lambda dist, m0: scale_base(dist, m0)*(dist>=dist_min) + scale_base(dist_min, m0)*(dist<dist_min)
+    
+    #plt.figure()
+    #plt.plot(x, scale_new(x, 3.))
+
+    #dists = np.arange(0, 18000., 5.)
+    #plt.figure()
+    #plt.plot(scale_new(dists, 3))
+
+    return shape_new, scale_new
+
+def get_lognormal_curves(file_curve, freq, depths=[0, 50], dist_min = 100., rho0=50., rhob=1., cb=250., use_savgol_filter=False, plot=False, scalar_moment=1, unknown='pressure', threshold_amp=1e-28, return_dataframe=False, factor_lower_shape=1.):
+
+    only_one_TL = False
+    if isinstance(freq, float):
+        freq = [freq]
+        only_one_TL = True
+    elif not isinstance(freq, list):
+        print("The variable is neither a float nor a list.")
+        return None, None, None
+
+    pd_all_amps = pd.read_csv(file_curve, header=[0])
+    pd_all_amps = pd_all_amps.loc[(pd_all_amps.depth>=depths[0]*1e3)&(pd_all_amps.depth<=depths[1]*1e3)&(pd_all_amps.amp_RW>=threshold_amp)]
+    
+    shape_new, scale_new = dict(), dict()
+    for one_freq in freq:
+        shape_new_loc, scale_new_loc = get_lognormal_one_freq(pd_all_amps, one_freq, dist_min, rho0, rhob, cb, use_savgol_filter, scalar_moment, unknown, factor_lower_shape)
+        shape_new[one_freq] = shape_new_loc
+        scale_new[one_freq] = scale_new_loc
+
+    if only_one_TL:
+        shape_new, scale_new = shape_new_loc, scale_new_loc
+
+    if return_dataframe:
+        return shape_new, scale_new, pd_all_amps
+    else:
+        return shape_new, scale_new
+
 def return_one_interp(TL, density_ratio, amp_scaling):
 
     f_mean = interpolate.interp1d(TL.distance.values, TL.amp_median.values, bounds_error=False, fill_value=(TL.amp_median.values[0], TL.amp_median.values[-1]))
@@ -512,7 +613,20 @@ def return_one_interp(TL, density_ratio, amp_scaling):
 
     return TL_new, TL_new_qmin, TL_new_qmax
 
-def get_TL_curves_precomputed(file_curve, rho0=50., rhob=1., cb=250., unknown='pressure', model='Cold100'):
+
+def return_one_interp_lognormal(TL, density_ratio, amp_scaling):
+
+    f_shape = interpolate.interp1d(TL.distance.values, TL['shape'].values, bounds_error=False, fill_value=(TL['shape'].values[0], TL['shape'].values[-1]))
+    f_scale = interpolate.interp1d(TL.distance.values, TL['scale'].values, bounds_error=False, fill_value=(TL['scale'].values[0], TL['scale'].values[-1]))
+
+    shape_new = lambda dist: f_shape(dist)
+    scale_new = lambda dist, m0: density_ratio*pmt.magnitude_to_moment(m0)*f_scale(dist)/amp_scaling
+    #print(density_ratio, amp_scaling)
+    #print(f_scale(100.), scale_new(100., 3.))
+
+    return shape_new, scale_new
+
+def get_TL_curves_precomputed(file_curve, rho0=50., rhob=1., c0=400., cb=250., unknown='pressure', model='Cold100'):
 
     TL_all = pd.read_csv(file_curve, header=[0])
     comp = 'v' if unknown in ['pressure', 'velocity'] else 'u'
@@ -520,7 +634,7 @@ def get_TL_curves_precomputed(file_curve, rho0=50., rhob=1., cb=250., unknown='p
     m0_default = TL_all.m0_default.iloc[0]
     amp_scaling = pmt.magnitude_to_moment(m0_default)
 
-    density_ratio = np.sqrt(rho0/(rhob))
+    density_ratio = np.sqrt(rho0*c0/(rhob*cb))
     if unknown == 'pressure':
         density_ratio *= rhob*cb
 
@@ -534,6 +648,28 @@ def get_TL_curves_precomputed(file_curve, rho0=50., rhob=1., cb=250., unknown='p
         TL_new_qmax[one_freq] = TL_new_qmax_loc
 
     return TL_new, TL_new_qmin, TL_new_qmax
+
+def get_lognormal_precomputed(file_curve, rho0=50., rhob=1., c0=400., cb=250., unknown='pressure', model='Cold100'):
+
+    TL_all = pd.read_csv(file_curve, header=[0])
+    comp = 'v' if unknown in ['pressure', 'velocity'] else 'u'
+    TL_all = TL_all.loc[(TL_all.model == model)&(TL_all.comp == comp)]
+    m0_default = TL_all.m0_default.iloc[0]
+    amp_scaling = pmt.magnitude_to_moment(m0_default)
+
+    density_ratio = np.sqrt(rho0*c0/(rhob*cb))
+    if unknown == 'pressure':
+        density_ratio *= rhob*cb
+
+    shape_new, scale_new = dict(), dict()
+    for one_freq, TL in TL_all.groupby('freq'):
+
+        shape_new_loc, scale_new_loc = return_one_interp_lognormal(TL, density_ratio, amp_scaling)
+
+        shape_new[one_freq] = shape_new_loc
+        scale_new[one_freq] = scale_new_loc
+
+    return shape_new, scale_new
 
 def get_surface_ratios(file_ratio):
     surface_ratios = pd.read_csv(file_ratio)
@@ -614,6 +750,33 @@ def convolve_signal_with_spectrum(signal_ts, dt, fc):
     
     return convolved_signal
 
+def lognorm_cdf(x, shape, loc=0.0, scale=1.0):
+    x = np.asarray(x)
+    #m = x > loc
+    #z = np.log((x[m] - loc) / scale) / shape
+    z = np.log((x - loc) / scale) / shape
+    out = np.zeros_like(z, dtype=float)             # CDF = 0 for x <= loc
+    # Numerically stable form (avoid 1 - tiny):
+    #print(out.shape, m.shape, z.shape)
+    #out[m] = 0.5 * special.erfc(-z / np.sqrt(2.0))
+    out = 0.5 * special.erfc(-z / np.sqrt(2.0))
+    return out
+
+def piecewise_lognorm_cdf(x, tau, pi, p1, p2):
+    s1, l1, c1 = p1
+    s2, l2, c2 = p2
+    x = np.asarray(x)
+    F  = np.zeros_like(x, dtype=float)
+
+    F1_tau = lognorm_cdf(tau, s1, loc=l1, scale=c1)
+    F2_tau = lognorm_cdf(tau, s2, loc=l2, scale=c2)
+
+    left = x <= tau
+    #F[left]  = pi * lognorm.cdf(x[left], s1, loc=l1, scale=c1) / F1_tau
+    F[left]  = pi * lognorm_cdf(x[left], s1, loc=l1, scale=c1) / F1_tau
+    F[~left] = pi + (1.0 - pi) * (lognorm_cdf(x[~left], s2, loc=l2, scale=c2) - F2_tau) / (1.0 - F2_tau)
+    return F
+
 #######################
 ## PROBA CLASS MODEL ##
 #######################
@@ -621,14 +784,30 @@ import time
 
 class proba_model:
 
-    def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax, apply_fc_correction=None):
+    def __init__(self, pd_slopes, surface_ratios, amplitude_model, apply_fc_correction=None, which_TL_distribution='lognormal', shaper_has_mw=False, is_parallelized=False):
         
+        self.TL, self.TL_qmin, self.TL_qmax = None, None, None
+        self.scaler, self.shaper = None, None
+        self.shaper_has_mw = shaper_has_mw
+        if which_TL_distribution == 'normal':
+            self._build_normal_amplitude(amplitude_model)
+        elif which_TL_distribution == 'lognormal':
+            self._build_lognormal_amplitude(amplitude_model)
+        else:
+            raise ValueError("TL distribution must be normal or lognormal")
+
         self.pd_slopes = pd_slopes
         self.surface_ratios = surface_ratios
-        self.TL = TL
-        self.TL_qmin = TL_qmin
-        self.TL_qmax = TL_qmax
         self.apply_fc_correction = apply_fc_correction
+        self.which_TL_distribution = which_TL_distribution
+        #self.tau_lognormal = tau_lognormal
+        self.is_parallelized = is_parallelized
+
+    def _build_normal_amplitude(self, amplitude_model):
+        self.TL, self.TL_qmin, self.TL_qmax = amplitude_model
+
+    def _build_lognormal_amplitude(self, amplitude_model):
+        self.scaler, self.shaper = amplitude_model 
 
     @staticmethod
     def return_number_per_cat_and_setting(mw, pd_slopes, cat_quake, setting):
@@ -651,6 +830,7 @@ class proba_model:
 
     def compute_ratio_vs_loc(self, lats, lons, locations, region):
         
+        self.thres_dista_ratio = 750.
         surface_ratios_region = self.surface_ratios.loc[self.surface_ratios.region==region]
 
         #l_radius = surface_ratios_region.radius.unique()
@@ -662,45 +842,114 @@ class proba_model:
         
         for iloc in locations:
             
+            ratios_values_interp = np.zeros(self.dists.shape)
             if self.homogeneous_ratios:
                 dist_degree = np.radians((self.dists/(np.pi*self.r_venus))*180.)
                 ratios_values_interp = (1-np.cos(dist_degree))/2.
             else:
-                isurface = np.argmin(np.sqrt((lats[iloc]-l_lats)**2+(lons[iloc]-l_lons)**2))
+                #distance = np.sqrt((lats[iloc]-l_lats)**2+(lons[iloc]-l_lons)**2)
+                distance = haversine(lons[iloc], lats[iloc], l_lons, l_lats, r = 6052.)
+                if distance.min() > self.thres_dista_ratio:
+                    continue
+
+                isurface = np.argmin(distance)
                 surface_ratios_region_iloc = surface_ratios_region.loc[surface_ratios_region['iloc']==l_iloc[isurface]]
-                #print(isurface, region, surface_ratios_region['iloc'].unique())
+                #print(f'{lons[iloc]} {lats[iloc]} ({iloc}) -> {l_lons[isurface]} {l_lats[isurface]} ({isurface}): {surface_ratios_region_iloc.ratio.values.max()}')
+                
                 radius_values = surface_ratios_region_iloc.radius.values
                 ratios_values = surface_ratios_region_iloc.ratio.values
             
                 ratios_values_interp = np.interp(self.dists, radius_values/1e3, ratios_values)
+
+                #from pdb import set_trace as bp
+                #bp()
             
             RATIOs[:,:,:,iloc] = np.gradient(ratios_values_interp, self.dproba_dists)[np.newaxis,:,np.newaxis]
-            
-        return RATIOs
+
+        #print(f'{region}: {RATIOs.max()} ({lons.min()} / {lons.max()})')
+        return RATIOs # M0s x dists x SNR x loc
 
     def compute_cum_pdf(self, DISTS, MAG, DETECT_T):
 
         DISTS_r, MAG_r, DETECT_T_r =  DISTS.reshape(self.shape_init), MAG.reshape(self.shape_init), DETECT_T.reshape(self.shape_init)
-        x = DISTS_r[:,:,0:1,0] # M0s x dists x SNR x loc
-        mu = self.TL(x, MAG_r[:,:,0:1,0])/self.noise_level
-        sigma_qmax = self.TL_qmax(x, MAG_r[:,:,0:1,0])/self.noise_level
-        sigma_qmin = self.TL_qmin(x, MAG_r[:,:,0:1,0])/self.noise_level
+        if self.is_parallelized:
+            x = DISTS_r[:,:,0:1,0] # M0s x dists x SNR x loc
+        else:
+            x = DISTS_r[0:1,:,0:1,0] # M0s x dists x SNR x loc
+        #from pdb import set_trace as bp
+        #bp()
 
-        if self.apply_fc_correction is not None:
-            delta_sigma = 3. # Stress drop (MPa)
-            Vs = 3500. # shear wave velocity (m/s)
-            n = 2. # Fall off rate
-            FC = corner_frequency(MAG_r[:,:,0:1,0], delta_sigma, Vs, Cs=0.32)
-            COEFS_BRUNE = brune_spectrum(self.apply_fc_correction, FC, n=n)
-            mu *= COEFS_BRUNE
-            sigma_qmax *= COEFS_BRUNE
-            sigma_qmin *= COEFS_BRUNE
-        
         total_pdf = np.zeros(self.shape_init)
-        cums_max = 1-0.5*(1+special.erf( (DETECT_T_r[0:1,0:1,:,0]-mu)/(sigma_qmax*np.sqrt(2.)) ))
-        cums_min = 1-0.5*(1+special.erf( (DETECT_T_r[0:1,0:1,:,0]-mu)/(sigma_qmin*np.sqrt(2.)) ))
-        
-        cums = np.where(DETECT_T_r[0:1,0:1,:,0] < mu, cums_min, cums_max)
+        if self.which_TL_distribution == 'normal':
+            if self.is_parallelized:
+                mu = self.TL(x, MAG_r[:,:,0:1,0])/self.noise_level
+                sigma_qmax = self.TL_qmax(x, MAG_r[:,:,0:1,0])/self.noise_level
+                sigma_qmin = self.TL_qmin(x, MAG_r[:,:,0:1,0])/self.noise_level
+
+            else:
+                mu = self.TL(x, MAG_r[:,0:1,0:1,0])/self.noise_level
+                sigma_qmax = self.TL_qmax(x, MAG_r[:,0:1,0:1,0])/self.noise_level
+                sigma_qmin = self.TL_qmin(x, MAG_r[:,0:1,0:1,0])/self.noise_level
+
+            if self.apply_fc_correction is not None:
+                delta_sigma = 3. # Stress drop (MPa)
+                Vs = 3500. # shear wave velocity (m/s)
+                n = 2. # Fall off rate
+                if self.is_parallelized:
+                    FC = corner_frequency(MAG_r[:, :, 0:1, 0], delta_sigma, Vs, Cs=0.32)
+                else:
+                    FC = corner_frequency(MAG_r[:, 0:1, 0:1, 0], delta_sigma, Vs, Cs=0.32)
+                COEFS_BRUNE = brune_spectrum(self.apply_fc_correction, FC, n=n)
+                mu *= COEFS_BRUNE
+                sigma_qmax *= COEFS_BRUNE
+                sigma_qmin *= COEFS_BRUNE
+            
+            cums_max = 1-0.5*(1+special.erf( (DETECT_T_r[0:1,0:1,:,0]-mu)/(sigma_qmax*np.sqrt(2.)) ))
+            cums_min = 1-0.5*(1+special.erf( (DETECT_T_r[0:1,0:1,:,0]-mu)/(sigma_qmin*np.sqrt(2.)) ))
+            
+            cums = np.where(DETECT_T_r[0:1,0:1,:,0] < mu, cums_min, cums_max)
+
+        elif self.which_TL_distribution == 'lognormal':
+
+            #print(x.shape, MAG_r[:,0:1,0:1,0].shape, self.noise_level)
+            #print(x.shape, MAG_r.shape)
+            if self.is_parallelized:
+                scale = self.scaler(x, MAG_r[:,:,0:1,0])/self.noise_level
+            else:
+                scale = self.scaler(x, MAG_r[:,0:1,0:1,0])/self.noise_level
+            if self.shaper_has_mw:
+                if self.is_parallelized:
+                    shape = self.shaper(x, MAG_r[:,:,0:1,0])
+                else:
+                    shape = self.shaper(x, MAG_r[:,0:1,0:1,0])
+            else:
+                shape = self.shaper(x)
+
+            if self.apply_fc_correction is not None:
+                delta_sigma = 3.  # MPa
+                Vs = 3500.        # m/s
+                n = 2
+                if self.is_parallelized:
+                    FC = corner_frequency(MAG_r[:, :, 0:1, 0], delta_sigma, Vs, Cs=0.32)
+                else:
+                    FC = corner_frequency(MAG_r[:, 0:1, 0:1, 0], delta_sigma, Vs, Cs=0.32)
+                COEFS_BRUNE = brune_spectrum(self.apply_fc_correction, FC, n=n)
+                # Scale-invariance for lognormals:
+                scale   *= COEFS_BRUNE
+
+            ## Below for piecewise lognormals
+            #lo = d[d <= self.tau_lognormal]
+            #pi = lo.size / d.size
+            #F_total   = piecewise_lognorm_cdf(DETECT_T_r[0:1,0:1,:,0], tau, pi, (shape_qmin, loc_qmin, scale_qmin), (shape_qmax, loc_qmax, scale_qmax))
+
+            F_total = lognorm_cdf(DETECT_T_r[0:1,0:1,:,0], shape, scale=scale)
+            
+            cums      = 1.0 - F_total # mag x dist x SNR
+
+            #print('cums.shape', cums[-1,0,:], scale[-1,0,0])
+            
+        else:
+            raise ValueError("TL distribution must be normal or lognormal")
         
         total_pdf += cums[:,:,:,np.newaxis]
             
@@ -710,8 +959,6 @@ class proba_model:
         total_pdf = self.compute_cum_pdf(DISTS, MAG, DETECT_T)
         
         integrated = {}
-        #print(RATIOs.keys())
-        #print(F_MAGS.keys())
         for region in RATIOs:
             integrated[region] = (F_MAGS[region]*RATIOs[region]*total_pdf).reshape(self.shape_init).sum(axis=(0,1)) 
             
@@ -749,6 +996,9 @@ class proba_model:
         F_MAGS = {}
         RATIOs = {}
         l_regions = self.pd_slopes.loc[:, ~self.pd_slopes.columns.str.contains('type')].columns.values
+        #print('------------------')
+        #print(lats.min(), lats.max())
+        #print(lons.min(), lons.max())
         for region in l_regions:
 
             if (not region=='intraplate') and 'inactive' in self.scenario:
@@ -770,6 +1020,7 @@ class proba_model:
                 if self.verbose:
                     print(f'Computing surface ratio for region: {region}')
             RATIOs[region] = self.compute_ratio_vs_loc(lats, lons, locations, region_str).ravel()
+            #print('RATIOs[region]', region, RATIOs[region].min(), RATIOs[region].max())
 
         if self.homogeneous_ratios:
             region_str = {}
@@ -799,13 +1050,15 @@ class proba_model:
         DISTS, MAG, DETECT_T, LOC = DISTS.ravel(), MAG.ravel(), DETECT_T.ravel(), LOC.ravel()
         return DISTS, MAG, DETECT_T, LOC
 
+    def _get_noise_level(self, noise_level):
+        self.noise_level = noise_level
+
     def compute_proba_map(self, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, all_lons, homogeneous_ratios, m_min, r_venus, return_rate=False, rates_provided=None, verbose=False, disable_tqdm=False):
 
         self.scenario = scenario
         self.dists = dists
         self.M0s = M0s
         self.SNR_thresholds = SNR_thresholds
-        self.noise_level = noise_level
         self.duration = duration
         self.all_lats = all_lats
         self.all_lons = all_lons
@@ -816,6 +1069,7 @@ class proba_model:
         self.return_rate = return_rate
         self.rates_provided = rates_provided
 
+        self._get_noise_level(noise_level)
         self.init_discretization()
         
         self.proba_all = np.zeros((self.SNR_thresholds.size, self.all_lats.size, self.all_lons.size))
@@ -840,7 +1094,7 @@ class proba_model:
             #time_loc = time.time()
 
             F_MAGS, RATIOs = self.get_ratios_famp(lats, lons, locations) ## Most expensive step
-
+            
             #print(f'Time spent 2 {time.time()-time_loc} s')
             #time_loc = time.time()
 
@@ -887,11 +1141,11 @@ def merge_and_fix_surface_ratio_region(pattern, regions=['corona', 'rift', 'ridg
 ## PROBAS CPUs ##
 #################
 
-def compute_proba_map_one_CPU(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, homogeneous_ratios, m_min, r_venus, apply_fc_correction, inputs):
+def compute_proba_map_one_CPU(pd_slopes, surface_ratios, amplitude_model, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, homogeneous_ratios, m_min, r_venus, apply_fc_correction, which_TL_distribution, inputs):
 
     process_id, idx, all_lons = inputs
 
-    one_proba_model = proba_model(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax, apply_fc_correction=apply_fc_correction)
+    one_proba_model = proba_model(pd_slopes, surface_ratios, amplitude_model, apply_fc_correction=apply_fc_correction, which_TL_distribution=which_TL_distribution, shaper_has_mw=True, is_parallelized=True)
     opt_model = dict(
         scenario = scenario, # Iris' seismicity scenario
         dists = dists, # Low discretization will lead to terrible not unit integrals
@@ -905,7 +1159,7 @@ def compute_proba_map_one_CPU(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax, s
         m_min = m_min,
         r_venus = r_venus,
         disable_tqdm = not process_id == 0,
-        verbose=False
+        verbose=False,
     )
     one_proba_model.compute_proba_map(**opt_model)
 
@@ -919,25 +1173,34 @@ def TL_converted_func(interpolator, dists, mws):
         m_return = interpolator.ev(dists.ravel(), mws.ravel()).reshape(shape_init)
     return m_return
 
-def convert_lambda_to_interpolator(TL, dists, mws):
+def convert_lambda_to_interpolator(TL, dists, mws, no_mw_input=False):
 
     m_dists, m_mws = np.meshgrid(dists, mws)
-    m_TL = TL(m_dists, m_mws)
+    if no_mw_input:
+        m_TL = TL(m_dists)
+    else:
+        m_TL = TL(m_dists, m_mws)
     interpolator = RectBivariateSpline(dists, mws, m_TL.T, kx=1, ky=1)
     TL_corrected = partial(TL_converted_func, interpolator)
     return TL_corrected
 
 class proba_model_CPUs(proba_model):
 
-    def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax, apply_fc_correction=None):
-        super().__init__(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax, apply_fc_correction)
+    def __init__(self, pd_slopes, surface_ratios, amplitude_model, apply_fc_correction=None, which_TL_distribution='lognormal',):
+        super().__init__(pd_slopes, surface_ratios, amplitude_model, apply_fc_correction, which_TL_distribution, shaper_has_mw=True)
         
     def compute_scores_across_CPUs(self, scenario, dists, M0s, SNR_thresholds, noise_level, duration, all_lats, all_lons, homogeneous_ratios, m_min, r_venus, nb_CPU=12):
 
         ## Converting lambda functions to be pickable
-        self.TL = convert_lambda_to_interpolator(self.TL, dists, M0s)
-        self.TL_qmin = convert_lambda_to_interpolator(self.TL_qmin, dists, M0s)
-        self.TL_qmax = convert_lambda_to_interpolator(self.TL_qmax, dists, M0s)
+        if self.which_TL_distribution == 'normal':
+            self.TL = convert_lambda_to_interpolator(self.TL, dists, M0s)
+            self.TL_qmin = convert_lambda_to_interpolator(self.TL_qmin, dists, M0s)
+            self.TL_qmax = convert_lambda_to_interpolator(self.TL_qmax, dists, M0s)
+            amplitude_model = self.TL, self.TL_qmin, self.TL_qmax
+        else:
+            self.scaler = convert_lambda_to_interpolator(self.scaler, dists, M0s)
+            self.shaper = convert_lambda_to_interpolator(self.shaper, dists, M0s, no_mw_input=True)
+            amplitude_model = self.scaler, self.shaper
 
         self.scenario = scenario 
         self.dists = dists 
@@ -955,7 +1218,7 @@ class proba_model_CPUs(proba_model):
         idx_start_all = np.arange(0, self.size_parameter_space)
         nb_chunks = idx_start_all.size
         
-        partial_compute_proba_map = partial(compute_proba_map_one_CPU, self.pd_slopes, self.surface_ratios, self.TL, self.TL_qmin, self.TL_qmax, self.scenario, self.dists, self.M0s, self.SNR_thresholds, self.noise_level, self.duration, self.all_lats, self.homogeneous_ratios, self.m_min, self.r_venus, self.apply_fc_correction)
+        partial_compute_proba_map = partial(compute_proba_map_one_CPU, self.pd_slopes, self.surface_ratios, amplitude_model, self.scenario, self.dists, self.M0s, self.SNR_thresholds, self.noise_level, self.duration, self.all_lats, self.homogeneous_ratios, self.m_min, self.r_venus, self.apply_fc_correction, self.which_TL_distribution)
             
         N = min(nb_CPU, nb_chunks)
         ## If one CPU requested, no need for deployment
@@ -992,17 +1255,41 @@ class proba_model_CPUs(proba_model):
 
 class proba_model_airglow(proba_model):
 
-    def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax):
-        super().__init__(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax)
+    def __init__(self, pd_slopes, surface_ratios, amplitude_model, apply_fc_correction=None, which_TL_distribution='lognormal', use_v_scaler=False, type_airglow='dayglow', photons_dayglow=3.5e5, photons_nightglow=2e4, data_scaling=None):
+        super().__init__(pd_slopes, surface_ratios, amplitude_model, apply_fc_correction, which_TL_distribution,)
+        self.use_v_scaler = use_v_scaler
+        self.type_airglow = type_airglow
+        self.photons_dayglow = photons_dayglow
+        self.photons_nightglow = photons_nightglow
+        self.data_scaling = data_scaling
 
-    @staticmethod
-    def return_number_per_cat_and_setting(mw, pd_slopes, cat_quake, setting):
+        if not self.use_v_scaler:
+            print('You are not using the scaler so make sure to pass the right altitude for the pressure amplitude model and the right surface ratios')
 
-        popt = pd_slopes.loc[(pd_slopes.type_setting==setting), cat_quake].values
-        poly1d = np.poly1d(popt)
-        func = lambda mw: 10**poly1d(mw)
+        if self.use_v_scaler and self.data_scaling is None:
+            print('Can not create proper airglow instance if using ground velocity scaler but no data_scaling provided')
+            return
+
+        if self.use_v_scaler:
+            print('You are using the scaler so make sure to pass the right ground velocity amplitude model and not a pressure amplitude model')
         
-        return func(mw)
+        self._modify_lognormal_scaler()
+
+    def _modify_lognormal_scaler(self):
+        if self.use_v_scaler:
+            scaling = self.data_scaling.dayglow if self.type_airglow == 'dayglow' else self.data_scaling.nightglow
+        else:
+            scaling = 1.
+        self.scaler = lambda dist, m0: self.scaler_orig(dist, m0)*scaling
+
+    def _build_lognormal_amplitude(self, amplitude_model):
+        self.scaler_orig, self.shaper = amplitude_model  
+
+    def _get_noise_level(self, noise_level):
+        if self.use_v_scaler:
+            self.noise_level = 1./(np.sqrt(self.photons_dayglow)) if self.type_airglow == 'dayglow' else 1./(np.sqrt(self.photons_nightglow))
+        else:
+            self.noise_level = noise_level
 
 ##########################
 ## PROBA MODEL WRINKLES ##
@@ -1010,8 +1297,8 @@ class proba_model_airglow(proba_model):
 
 class proba_model_wrinkles(proba_model):
 
-    def __init__(self, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax):
-        super().__init__(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax)
+    def __init__(self, pd_slopes, surface_ratios, amplitude_model, apply_fc_correction=None, which_TL_distribution='lognormal',):
+        super().__init__(pd_slopes, surface_ratios, amplitude_model, apply_fc_correction, which_TL_distribution)
 
     @staticmethod
     def return_number_per_cat_and_setting(mw, pd_slopes, cat_quake, setting):
@@ -1041,8 +1328,8 @@ def haversine(lon1, lat1, lon2, lat2, r = 6052.):
 
 class proba_model_volcano(proba_model):
 
-    def __init__(self, lat_volcanoes, lon_volcanoes, pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax):
-        super().__init__(pd_slopes, surface_ratios, TL, TL_qmin, TL_qmax)
+    def __init__(self, lat_volcanoes, lon_volcanoes, pd_slopes, surface_ratios, amplitude_model, apply_fc_correction=None, which_TL_distribution='lognormal',):
+        super().__init__(pd_slopes, surface_ratios, amplitude_model, apply_fc_correction, which_TL_distribution)
         self.lat_volcanoes = lat_volcanoes
         self.lon_volcanoes = lon_volcanoes
 
@@ -1829,56 +2116,4 @@ def plot_trajectory(new_trajectories_total, proba_model, winds, VENUS=None, snr=
 ##########################
 if __name__ == '__main__':
 
-    """
-    PATH_VENUS_DATA = os.path.join("../../../Venus_data/")
-    PATH_VENUS = os.path.join(f"{PATH_VENUS_DATA}tectonic_settings_Venus")
-    VENUS = {
-        'corona': gpd.read_file(f"{PATH_VENUS}/corona.shp"),
-        'rift': gpd.read_file(f"{PATH_VENUS}/rifts.shp"),
-        'ridge': gpd.read_file(f"{PATH_VENUS}/ridges.shp")
-    }
-
-    ## Below to create surface ratios
-    output_file = './test_data_Venus/surface_ratios.csv'
-    l_lon = np.arange(-179, -150, 1)
-    l_lat = np.arange(-89, 90, 1)
-    compute_ratios(VENUS, l_lon, l_lat, output_file, ratio_df=pd.DataFrame())
-    """
-
-    file_slopes = '../../../Venus_data/distribution_venus_per_mw.csv'
-    pd_slopes = get_slopes(file_slopes)
-
-    file_curve = './test_data_Venus/GF_reverse_fault_1Hz_c15km.csv'
-    TL_new, TL_new_qmin, TL_new_qmax = get_TL_curves(file_curve, dist_min = 100., plot=False)
-
-    file_ratio = './test_data_Venus/surface_ratios_fixed.csv'
-    surface_ratios = get_surface_ratios(file_ratio)
-
-    dlat = 5.
-    r_venus = 6052
-    opt_model = dict(
-        scenario = 'active_high_min', # Iris' seismicity scenario
-        dists = np.arange(10., np.pi*r_venus, 200), # Low discretization will lead to terrible not unit integrals
-        M0s = np.linspace(3., 8., 30), # Low discretization will lead to terrible not unit integrals
-        SNR_thresholds = np.linspace(0.1, 10., 50),
-        noise_level = 5e-2, # noise level in Pa
-        duration = 1./(365.*24), # (1/mission_duration)
-        all_lats = np.arange(-90., 90.+dlat, dlat),
-        all_lons = np.arange(-180, 180+dlat*2, dlat*2),
-        homogeneous_ratios = False,
-        m_min = 3.,
-        r_venus = r_venus,
-        
-    )
-
-    proba_all_other_high = compute_proba_map(pd_slopes, surface_ratios, TL_new, TL_new_qmin, TL_new_qmax, **opt_model)
-
-    ## Visualization
-    # low_cmap, high_cmap = np.arange(1e-2, 5e-2, 5e-3), np.arange(5e-2, 1.25e-1, 1e-2) # 1 hour
-    low_cmap, high_cmap = np.arange(5e-1, 1, 1e-1), np.arange(2, 3, 0.25) # 1 day RW
-    low_cmap, high_cmap = np.arange(2.5e-1, 1, 1e-1), np.arange(2, 3, 0.25) # 1 day RW low activity
-    #low_cmap, high_cmap = np.arange(3e-1, 1, 1e-1), np.arange(1, 3, 0.25) # 1 day body
-
-    plot_map(all_lats, all_lons, proba_all_other_high, SNR_thresholds, VENUS, c_cbar='black', l_snr_to_plot=[1.,5.], n_colors=10, low_cmap=low_cmap, high_cmap=high_cmap,)#low_cmap, high_cmap = np.arange(20, 60, 10), np.arange(60, 80, 10) # 1 day ratio over homogeneous
-    #plot_map(all_lats, all_lons, proba_all_other, SNR_thresholds, duration, VENUS, l_snr_to_plot=[1.,5.], n_colors=10, low_cmap=low_cmap, high_cmap=high_cmap, proba_all_homo=proba_all_homo)
-
+    bp()

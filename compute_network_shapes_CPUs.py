@@ -63,12 +63,12 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
     x, y = proj(LONS, LATS)
 
     gdf = []
-    #for iscenario in tqdm(range(500,503)):
-    for iscenario_loc in tqdm(range(max_dist.shape[0]), disable=not iCPU == 0):
+    #cpt_threshold_dict = dict()
+    for iscenario_loc in tqdm(range(max_dist.shape[0]), disable=not iCPU == 0): ## Loop over station location
 
         iscenario = all_idx[iscenario_loc]
         if debug:
-            if not iscenario == 160:
+            if not iscenario == 40:
                 continue
 
         max_map = max_dist[iscenario_loc,:]
@@ -84,11 +84,10 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
         first_pass_done = False
         threshold_offset = 80.
         cpt_threshold = 0
-        for ithreshold, threshold in enumerate(thresholds[:]):
+        for threshold in thresholds[:]: ## Loop over radius from station
 
-            #print(f'threshold {first_pass_done} - {threshold}')
-            inds = np.where(max_map/1e3<=threshold+threshold_offset)[0] 
-            if inds.size == 0:
+            inds = np.where(max_map/1e3<= threshold+threshold_offset)[0] ## Find pixels on global map matching current circle centered around station with radius threshold 
+            if inds.size == 0: ## Skip thresholds where there are no matching distance in max_dist
                 continue
 
             cpt_threshold += 1
@@ -127,19 +126,32 @@ def compute_surfaces(thresholds, LATS, LONS, lats_stations, lons_stations, polys
                         ax.add_patch(interior_patch)
 
                 x, y = proj(lons_stations[iscenario, :], lats_stations[iscenario, :])
+                xmin, _ = proj(-180., 0.)
+                xmax, _ = proj(180., 0.)
+                _, ymin = proj(0., -90.)
+                _, ymax = proj(0., 90.)
                 ax.scatter(x, y, marker='x', s=100, color='red')
+                ax.set_xlim([xmin, xmax])
+                ax.set_ylim([ymin, ymax])
                 #ax.legend()
                 
                 ax.set_title(f'{threshold} - iscenario: {iscenario}')
                 print(f'Saving')
-                #plt.savefig(f'./test_threshold{cpt_threshold}_CPU{iCPU}_iscenario.png')
+                plt.savefig(f'./figures/test_threshold{cpt_threshold}_CPU{iCPU}_iscenario.png')
+                #bp()
 
             first_pass_done = True
+
+            #if threshold < 10000.:
+            #    bp()
+
+        #cpt_threshold_dict[iscenario_loc] = cpt_threshold
 
         if debug:
             break
 
     gdf = gpd.GeoDataFrame(gdf)
+    #bp()
     return gdf
 
 def haversine_distance(lon1, lat1, lons, lats, RADIUS_VENUS=6051.8e3):
@@ -254,7 +266,12 @@ def get_f_VER(file_airglow):
     
     return f_VER
 
-def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_balloon=1e-2, boost_SNR=1., m0=7., adjust_indexes=False):
+from scipy.signal import savgol_filter
+def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, type_airglow='dayglow', R0=6052000, sigma_balloon=1e-2, boost_SNR=1., m0=7., adjust_indexes=False, keep_largest_index=True, set_to_zero_init=False):
+
+    adjust_indexes=False
+    keep_largest_index=True
+    set_to_zero_init = False
 
     #scaling = pd.read_csv(file_scaling, header=[0])
     scaling = scaling_in.copy()
@@ -262,16 +279,34 @@ def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_
         diff = abs(scaling.period-period)
         scaling = scaling.loc[diff==diff.min()]
     f_airglow = interpolate.interp1d(scaling.distance, scaling.SNR, kind='nearest', bounds_error=False, fill_value=(scaling.SNR.iloc[0], scaling.SNR.iloc[-1]))
-
+    
     distances = np.linspace(0., np.pi*R0/1.001, 300)/1e3
-    distances_r0 = np.linspace(-np.pi*R0/1.001, np.pi*R0/1.001, 300)/1e3
+    distances_r0 = np.linspace(-np.pi*R0/1.001, np.pi*R0/1.001, 400)/1e3
     DIST, DIST_R0 = np.meshgrid(distances, distances_r0)
+    #diff = abs(TL_new_p(DIST+DIST_R0, m0)/sigma_balloon-boost_SNR*f_airglow(DIST))
 
-    diff = abs(TL_new_p(DIST+DIST_R0, m0)/sigma_balloon-boost_SNR*f_airglow(DIST))
+    y_fit = f_airglow(distances)
+    y_fit = np.exp(savgol_filter(np.log(y_fit), window_length=17, polyorder=1))
+    f_airglow_loc = interpolate.interp1d(distances, y_fit, kind='nearest', bounds_error=False, fill_value=(y_fit[0], y_fit[-1]))
 
-    flipped_diff = np.flip(diff, axis=0)
-    flipped_indices = flipped_diff.argmin(axis=0) ## In order to get argmin to return the largest index if multiple minima
-    original_indices = diff.shape[0] - 1 - flipped_indices
+    y_fit = TL_new_p(distances, m0)
+    y_fit = np.exp(savgol_filter(np.log(y_fit), window_length=17, polyorder=1))
+    f_TL_loc = interpolate.interp1d(distances, y_fit, kind='nearest', bounds_error=False, fill_value=(y_fit[0], y_fit[-1]))
+
+    diff = abs(f_TL_loc(DIST+DIST_R0)/sigma_balloon-boost_SNR*f_airglow_loc(DIST))
+
+    #dist = 1000.
+    #print(f' - dist {dist}: {f_TL_loc(dist)/sigma_balloon-boost_SNR*f_airglow_loc(dist):.2e}')
+    
+    if keep_largest_index:
+        #flipped_diff = np.flip(diff, axis=0)
+        #flipped_indices = flipped_diff.argmin(axis=0) ## In order to get argmin to return the largest index if multiple minima
+        #original_indices = diff.shape[0] - 1 - flipped_indices
+        thres = 1e-3
+        mins = diff.min(axis=0)
+        original_indices = np.array([np.where(abs(diff[:, j]-mins[j])<thres)[0].max() for j in range(diff.shape[1])])
+    else:
+        original_indices = diff.argmin(axis=0)
 
     coefs = distances_r0[original_indices]
     if adjust_indexes:
@@ -292,17 +327,28 @@ def get_airglow_scaling_from_TL(TL_new_p, scaling_in, period, R0=6052000, sigma_
 
         coefs = distances_r0[adjusted_indices]
 
-    coefs[0] = 0.
-
-    """
-    plt.figure()
-    plt.plot(distances, distances_r0[original_indices], label='orig')
-    plt.plot(distances, distances_r0[adjusted_indices])
-    plt.legend()
-    """
+    if set_to_zero_init:
+        coefs[0] = 0.
 
     f_alt_scaling = interpolate.interp1d(distances, coefs, bounds_error=False, fill_value=(coefs[0], coefs[-1]))
 
+    """
+    coefficients = np.polyfit(distances, TL_new_p(distances, m0)/sigma_balloon, 5); pp = np.poly1d(coefficients); y_fit = pp(distances)
+    plt.plot(distances, y_fit, label='TL p fit'); 
+    plt.figure(); plt.plot(distances, f_TL_loc(distances)/sigma_balloon, label='TL p'); plt.plot(distances, f_airglow_loc(distances), label='airglow'); plt.legend(); plt.yscale('log'); plt.savefig('./figures/test_SNR.png')
+
+    plt.figure(); plt.plot(distances, f_alt_scaling(distances)); plt.savefig('./figures/test_f_alt_scaling.png')
+    """
+
+    """
+    plt.figure(); sc=plt.pcolormesh(distances, distances_r0, diff, vmax=0.05); plt.plot(distances, coefs, color='red', lw=5); plt.colorbar(sc); plt.xlim([0., 15000]); plt.savefig(f'./figures/test_diff_{period}_{type_airglow}.png')
+
+    plt.figure(); plt.plot(distances, f_TL_loc(distances)/sigma_balloon, label='TL p'); plt.plot(distances, boost_SNR*f_airglow_loc(distances), label='airglow'); plt.title(period); plt.legend(); plt.yscale('log'); plt.savefig(f'./figures/test_SNR_{period}_{type_airglow}.png')
+
+    #plt.figure(); plt.plot(distances, (f_TL_loc(distances)/sigma_balloon)/(boost_SNR*f_airglow_loc(distances)), label='airglow'); plt.title(period); plt.yscale('log'); plt.savefig(f'./figures/test_SNR_ratio_{period}_{type_airglow}.png')
+    #bp()
+    """
+    
     return f_alt_scaling
 
 def load_precomputed_scaling(distances, TL_new_v, periods, file_precomputed_scaling, m0, beta, photons_dayglow, photons_nightglow):
@@ -331,6 +377,8 @@ def load_precomputed_scaling(distances, TL_new_v, periods, file_precomputed_scal
             data_scaling_loc = data_scaling.loc[(data_scaling.f1<=1./period)&(data_scaling.f2>=1./period)].iloc[0]
 
         scaling_dayglow = beta*TL_new_v_loc(distances, m0)*data_scaling_loc.dayglow/sigma_dayglow
+        #print(f'{period} s: {TL_new_v_loc(1000., m0)} at 1000 km')
+        #print(f'--> {beta*TL_new_v_loc(1000., m0)*data_scaling_loc.dayglow/sigma_dayglow}')
         pd_scaling_dayglow = pd.DataFrame(np.c_[distances, scaling_dayglow], columns=['distance', 'SNR'])
         pd_scaling_dayglow['period'] = period
         pd_scaling_dayglow_all = pd.concat([pd_scaling_dayglow_all, pd_scaling_dayglow])
@@ -345,7 +393,7 @@ def load_precomputed_scaling(distances, TL_new_v, periods, file_precomputed_scal
 
     return pd_scaling_dayglow_all, pd_scaling_nightglow_all
 
-def get_airglow_SNR(file_curve, freq, file_precomputed_scaling=None, file_atmos='./data/profile_VCD_for_scaling_pd.csv', file_nightglow='./data/VER_profile_scaled.csv', file_dayglow='./data/VER_profile_dayglow.csv', R0=6052000, photons_dayglow=3.5e5, alpha_dayglow=1e-5, photons_nightglow=2e4, beta=1., TL_new_v=None, TL_new_p=None, m0 = 7.):
+def get_airglow_SNR(file_curve, freq, file_precomputed_scaling=None, file_atmos='./data/profile_VCD_for_scaling_pd.csv', file_nightglow='./data/VER_profile_scaled.csv', file_dayglow='./data/VER_profile_dayglow.csv', R0=6052000, photons_dayglow=3.5e5, alpha_dayglow=1e-5, photons_nightglow=2e4, beta=1., TL_new_v=None, TL_new_p=None, m0 = 7., alt_scaling_airglow=90.):
 
     ## Standard Inputs
     R0 = 6052000
@@ -366,7 +414,7 @@ def get_airglow_SNR(file_curve, freq, file_precomputed_scaling=None, file_atmos=
     ## Load frequency dependent TL curves
     #file_curve = './data/GF_data/GF_Dirac_1Hz_all_wfreq.csv'
     #freq = [0.01, 0.1, 1.]
-    dict_TL = dict(dist_min=100., rho0=f_rho(0.), rhob=f_rho(90.), cb=f_c(90.), use_savgol_filter=True, plot=False, scalar_moment=10e6, return_dataframe=False)
+    dict_TL = dict(dist_min=100., rho0=f_rho(0.), c0=f_c(0.), rhob=f_rho(alt_scaling_airglow), cb=f_c(alt_scaling_airglow), use_savgol_filter=True, plot=False, scalar_moment=10e6, return_dataframe=False)
     if TL_new_v is None:
         TL_new_v, _, _ = pm.get_TL_curves(file_curve, freq, unknown='velocity', **dict_TL)
     if TL_new_p is None:
@@ -387,7 +435,7 @@ def get_airglow_SNR(file_curve, freq, file_precomputed_scaling=None, file_atmos=
 
     return dayglow_scaling, nightglow_scaling, TL_new_v, TL_new_p
 
-def get_airglow_scaling(file_curve, freq, file_precomputed_scaling=None, file_atmos='./data/profile_VCD_for_scaling_pd.csv', file_nightglow='./data/VER_profile_scaled.csv', file_dayglow='./data/VER_profile_dayglow.csv', R0=6052000, sigma_balloon=1e-2, boost_SNR=1., photons_dayglow=3.5e5, alpha_dayglow=1e-5, photons_nightglow=2e4, beta=1., TL_new_v=None, TL_new_p=None, m0 = 7., model_subsurface='Cold100', return_df_scaling=False):
+def get_airglow_scaling(file_curve, freq, file_precomputed_scaling=None, file_atmos='./data/profile_VCD_for_scaling_pd.csv', file_nightglow='./data/VER_profile_scaled.csv', file_dayglow='./data/VER_profile_dayglow.csv', R0=6052000, sigma_balloon=1e-2, boost_SNR=1., photons_dayglow=3.5e5, alpha_dayglow=1e-5, photons_nightglow=2e4, beta=1., TL_new_v=None, TL_new_p=None, m0 = 7., model_subsurface='Cold100', alt_scaling_airglow=90., alt_ref_balloon=90., return_df_scaling=False, distribution_requested='lognormal'):
 
     ## Standard Inputs
     R0 = 6052000
@@ -409,11 +457,18 @@ def get_airglow_scaling(file_curve, freq, file_precomputed_scaling=None, file_at
     #file_curve = './data/GF_data/GF_Dirac_1Hz_all_wfreq.csv'
     #freq = [0.01, 0.1, 1.]
     #dict_TL = dict(dist_min=100., rho0=f_rho(0.), rhob=f_rho(90.), cb=f_c(90.), use_savgol_filter=True, plot=False, scalar_moment=10e6, return_dataframe=False)
-    dict_TL = dict(rho0=f_rho(0.), rhob=f_rho(90.), cb=f_c(90.), model=model_subsurface, )
-    if TL_new_v is None:
-        TL_new_v, _, _ = pm.get_TL_curves_precomputed(file_curve, unknown='velocity', **dict_TL)
-    if TL_new_p is None:
-        TL_new_p, _, _ = pm.get_TL_curves_precomputed(file_curve, unknown='pressure', **dict_TL)
+    dict_TL_p = dict(rho0=f_rho(0.), c0=f_rho(0.), rhob=f_rho(alt_ref_balloon), cb=f_c(alt_ref_balloon), model=model_subsurface, )
+    dict_TL_v = dict(rho0=f_rho(0.), c0=f_rho(0.), rhob=f_rho(alt_scaling_airglow), cb=f_c(alt_scaling_airglow), model=model_subsurface, )
+    if distribution_requested == 'lognormal':
+        if TL_new_v is None:
+            _, TL_new_v = pm.get_lognormal_precomputed(file_curve, unknown='velocity', **dict_TL_v)
+        if TL_new_p is None:
+            _, TL_new_p = pm.get_lognormal_precomputed(file_curve, unknown='pressure', **dict_TL_p)
+    else:
+        if TL_new_v is None:
+            TL_new_v, _, _ = pm.get_TL_curves_precomputed(file_curve, unknown='velocity', **dict_TL_v)
+        if TL_new_p is None:
+            TL_new_p, _, _ = pm.get_TL_curves_precomputed(file_curve, unknown='pressure', **dict_TL_p)
 
     ## Compute nightglow scaling which is period dependent unlike dayglow
     ## Dayglow scaling is period independent because dominated by advection
@@ -432,19 +487,25 @@ def get_airglow_scaling(file_curve, freq, file_precomputed_scaling=None, file_at
     opt_scaling = dict(R0=R0, sigma_balloon=sigma_balloon, m0=m0, adjust_indexes=True)
     f_alt_scaling_dayglow, f_alt_scaling_nightglow = dict(), dict()
     for period, scaling in dayglow_scaling.groupby('period'):
+        print(f'Dayglow period {period}')
         TL = TL_new_p[1./period]
-        f_alt_scaling_dayglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, boost_SNR=boost_SNR['dayglow'], **opt_scaling)
+        #print('dayglow', period)
+        f_alt_scaling_dayglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, boost_SNR=boost_SNR['dayglow'], type_airglow='dayglow', **opt_scaling)
 
     for period, scaling in nightglow_scaling.groupby('period'):
+        print(f'Nightglow period {period}')
         TL = TL_new_p[1./period]
-        f_alt_scaling_nightglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, boost_SNR=boost_SNR['nightglow'], **opt_scaling)
+        #print('night', period)
+        f_alt_scaling_nightglow[period] = get_airglow_scaling_from_TL(TL, scaling, period, boost_SNR=boost_SNR['nightglow'], type_airglow='nightglow',**opt_scaling)
+
+    #bp()
 
     if return_df_scaling:
         return dayglow_scaling, nightglow_scaling, TL_new_v, TL_new_p
     else:
         return f_alt_scaling_dayglow, f_alt_scaling_nightglow, TL_new_v, TL_new_p
 
-def compute_intersections(C1, L1, C2, L2):
+def compute_intersections(C1_in, L1, C2_in, L2, type_airglow='dayglow'):
     """
     Compute the intersection center and half-length for multiple cases.
 
@@ -460,6 +521,13 @@ def compute_intersections(C1, L1, C2, L2):
     intersection_half_lengths : ndarray
         Half-lengths of the intersections.
     """
+
+    C2 = C2_in.copy()
+    C1 = C1_in.copy()
+    if type_airglow == 'nightglow':
+        C1[C1<0] += 360.
+        C2[C2<0] += 360.
+    
     # Calculate endpoints for both sets of lines
     start1, end1 = C1 - L1, C1 + L1
     start2, end2 = C2 - L2, C2 + L2
@@ -473,9 +541,11 @@ def compute_intersections(C1, L1, C2, L2):
     intersection_centers = np.where(valid, (left + right) / 2, 0.)
     intersection_half_lengths = np.where(valid, (right - left) / 2, -1.)
 
+    intersection_centers[intersection_centers>180.] -= 360.
+
     return intersection_centers, intersection_half_lengths
 
-def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat, s_cluster=100, use_airglow=False, which_stat_is_airglow=1, f_alt_scaling=None, lon_0_airglow=dict(nightglow=180., dayglow=0.), radius_airglow=dict(nightglow=60., dayglow=70.), radius_view=60., airglow_considered=['dayglow', 'nightglow'], type_detection='same_event'):
+def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat, period=1., s_cluster=100, use_airglow=False, which_stat_is_airglow=1, f_alt_scaling=None, lon_0_airglow=dict(nightglow=180., dayglow=0.), radius_airglow=dict(nightglow=60., dayglow=70.), radius_view=60., airglow_considered=['dayglow', 'nightglow'], type_detection='same_event'):
 
     if use_airglow and f_alt_scaling is None:
         print('ERROR: Cannot have airglow and not altitude scaling functional')
@@ -520,14 +590,27 @@ def get_max_dist(lats_stations, lons_stations, LATS, LONS, id_scenario, id_stat,
             ## Computing maximum scaled distances for both types of airglow
             max_dist_airglow_all = np.zeros_like(LONS[id_ref_quake])+1e10
             for type_airglow in airglow_considered:
-                new_lon, new_radius = compute_intersections(all_id_scenarios*0+lon_0_airglow[type_airglow], radius_airglow[type_airglow], lons_stations[all_id_scenarios, all_id_stat].ravel(), radius_view)
+                new_lon, new_radius = compute_intersections(all_id_scenarios*0+lon_0_airglow[type_airglow], radius_airglow[type_airglow], lons_stations[all_id_scenarios, all_id_stat].ravel(), radius_view, type_airglow=type_airglow)
                 max_dist_airglow = haversine_distance(LONS[id_ref_quake], LATS[id_ref_quake], new_lon, LONS[id_ref_quake]*0.,) 
                 max_dist_airglow -= new_radius*1e2*1e3
                 max_dist_airglow[max_dist_airglow<0] = 0.
                 max_dist_airglow[new_radius<0] = 1e10
+                
                 max_dist_airglow += f_alt_scaling[type_airglow](max_dist_airglow/1e3)*1e3
+                """
+                import matplotlib.patches as patches
+                dlon = 2.; lats, lons = np.arange(-90, 89, dlon/2.), np.arange(-180, 179, dlon); _, _, shape_init = get_grid(lats, lons);
+                
+                ii=40; circle = patches.Circle((lon_0_airglow[type_airglow], 0), radius=radius_airglow[type_airglow], facecolor='none', edgecolor='blue'); circle_view = patches.Circle((lons_stations[ii,0], 0), radius=radius_view, facecolor='none', edgecolor='red'); test=max_dist_airglow.reshape(shape_init_ref)[ii,:,0].reshape(shape_init); plt.figure(); sc=plt.pcolormesh(lons, lats, test.T/1e3, vmin=0., vmax=18000); plt.colorbar(sc); plt.scatter(lons_stations[ii,0], 0, marker='x', c='red'); ax=plt.gca(); ax.add_patch(circle); ax.add_patch(circle_view); plt.savefig(f'./figures/test_maxdist_{type_airglow}_{period}s.png')
+
+                max_dist_airglow += f_alt_scaling[type_airglow](max_dist_airglow/1e3)*1e3
+                #max_dist_airglow_c = max_dist_airglow.copy()
+                #max_dist_airglow_c += f_alt_scaling[type_airglow](max_dist_airglow_c/1e3)*1e3
+                ii=40; circle = patches.Circle((lon_0_airglow[type_airglow], 0), radius=radius_airglow[type_airglow], facecolor='none', edgecolor='blue'); circle_view = patches.Circle((lons_stations[ii,0], 0), radius=radius_view, facecolor='none', edgecolor='red'); test=max_dist_airglow.reshape(shape_init_ref)[ii,:,0].reshape(shape_init); plt.figure(); sc=plt.pcolormesh(lons, lats, test.T/1e3, vmin=0., vmax=18000); plt.colorbar(sc); plt.scatter(lons_stations[ii,0], 0, marker='x', c='red'); ax=plt.gca(); ax.add_patch(circle); ax.add_patch(circle_view); plt.savefig(f'./figures/test_maxdist_c_{type_airglow}_{period}s.png')
+                """
+                
                 max_dist_airglow[max_dist_airglow<0] = 0.
-                max_dist_airglow[max_dist_airglow/1e3>19000.] = 19000.*1e3
+                max_dist_airglow[max_dist_airglow/1e3>18500.] = 18500.*1e3
                 max_dist_airglow_all = np.min(np.stack((max_dist_airglow_all, max_dist_airglow), axis=-1), axis=-1)
                 
             #max_dist_airglow_all = max_dist_airglow_all.reshape(shape_init_ref).max(axis=-1)
