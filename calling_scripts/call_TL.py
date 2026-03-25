@@ -11,7 +11,8 @@ epsilon = 5e3
 
 delta_depth = 5e3
 #delta_depth = 25e3
-depths = np.arange(5e3, 50e3+delta_depth, delta_depth)
+#depths = np.arange(5e3, 50e3+delta_depth, delta_depth) ## Original but no need to go to 50 km since seismo thickness lower
+depths = np.arange(5e3, 25e3+delta_depth, delta_depth)
 
 ## STF
 #period = 1./1e-1
@@ -32,9 +33,8 @@ for ibin, (binleft, binright) in enumerate(zip(bins[:-1], bins[1:])):
 ## Greens functions STORES
 base_folder = '/projects/restricted/infrasound/data/infrasound/2023_Venus_inversion/'
 
-l_stores = ['Hot10', 'Hot25', 'Cold100']
-l_stores = ['Cold100']
-l_stores = ['Hot40']
+l_stores = ['Hot10_atten', 'Hot40_atten', 'Hot25_atten', 'Cold100_atten']
+
 #l_comp = [True, False]
 l_comp = [False]
 
@@ -42,14 +42,12 @@ dists = []
 dists.append(np.arange(0., 50.e3, 5e3)) # in km
 dists.append(np.arange(50.e3+epsilon, 8000.e3+epsilon, delta_dist)) # in km
 dists.append(np.arange(8000.e3+epsilon, 16000.e3+epsilon, delta_dist)) # in km
-"""
 dists.append(np.arange(0., 50.e3, 5e3)) # in km
 dists.append(np.arange(50.e3+epsilon, 8000.e3+epsilon, delta_dist)) # in km
 dists.append(np.arange(8000.e3+epsilon, 16000.e3+epsilon, delta_dist)) # in km
 dists.append(np.arange(0., 50.e3, 5e3)) # in km
 dists.append(np.arange(50.e3+epsilon, 8000.e3+epsilon, delta_dist)) # in km
 dists.append(np.arange(8000.e3+epsilon, 16000.e3+epsilon, delta_dist)) # in km
-"""
 
 for displacement in l_comp:
     for store in l_stores:
