@@ -3,12 +3,15 @@
 ## Summary
 The following codes allow the computation of venusquake detection probability for airglow and/or balloon missions on Venus. 
 
-## Requirements
-- Python3.7.9
-- Install in new conda environment with requirements.txt
+## Installation
+- conda create -n venus_detectability python=3.10
+- conda activate venus_detectability
+- pip install -r requirements.txt
 
 ## Usage
-See Python notebook "notebooks/compute_proba_detection_venus.ipynb"
+- Rayleigh wave detection probabilities along trajectory (Figure 3): "notebooks/create_Figure_trajectory_seismic.ipynb"
+- Seismic and Airglow final detection probabilities (Figure 4): "notebooks/create_Figure_statistics.ipynb"
+- Volcano detection probabilities along balloon trajectories (Figure 5): "notebooks/create_Figure_volcano.ipynb"
 
 ## Data
 You can collect the Green's functions stores here: 
